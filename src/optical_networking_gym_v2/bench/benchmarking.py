@@ -11,8 +11,8 @@ from optical_networking_gym_v2.contracts.modulation import Modulation
 from optical_networking_gym_v2.contracts.reward import CandidateRewardMetrics, RewardInput
 from optical_networking_gym_v2.contracts.step import StepTransition
 from optical_networking_gym_v2.contracts.traffic import ServiceRequest
-from optical_networking_gym_v2.envs.runtime_state import RuntimeState
-from optical_networking_gym_v2.envs.step_info import StepInfo
+from optical_networking_gym_v2.runtime.runtime_state import RuntimeState
+from optical_networking_gym_v2.runtime.step_info import StepInfo
 from optical_networking_gym_v2.network.allocation import (
     available_slots_for_path,
     build_first_fit_allocation,
@@ -20,11 +20,11 @@ from optical_networking_gym_v2.network.allocation import (
 )
 from optical_networking_gym_v2.network.topology import TopologyModel
 from optical_networking_gym_v2.optical.qot_engine import QoTEngine
-from optical_networking_gym_v2.rl.action_mask import ActionMask
-from optical_networking_gym_v2.rl.observation import Observation
+from optical_networking_gym_v2.features.action_mask import ActionMask
+from optical_networking_gym_v2.features.observation import Observation
 from optical_networking_gym_v2.rl.reward_function import RewardFunction
-from optical_networking_gym_v2.simulation.request_analysis import RequestAnalysisEngine
-from optical_networking_gym_v2.simulation.scenario import ScenarioConfig
+from optical_networking_gym_v2.runtime.request_analysis import RequestAnalysisEngine
+from optical_networking_gym_v2.config.scenario import ScenarioConfig
 from optical_networking_gym_v2.stats.statistics import Statistics
 
 

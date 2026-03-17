@@ -11,8 +11,8 @@ else:
     _GYM_IMPORT_ERROR = None
 
 from optical_networking_gym_v2.network.topology import TopologyModel
-from optical_networking_gym_v2.simulation.scenario import ScenarioConfig
-from optical_networking_gym_v2.simulation.simulator import Simulator
+from optical_networking_gym_v2.config.scenario import ScenarioConfig
+from optical_networking_gym_v2.runtime.simulator import Simulator
 
 
 if gym is not None:
@@ -58,6 +58,9 @@ if gym is not None:
 
         def action_masks(self) -> np.ndarray | None:
             return self.simulator.action_masks()
+
+        def heuristic_context(self):
+            return self.simulator.heuristic_context()
 
         def get_trace_action_mask(self) -> np.ndarray:
             return self.simulator.get_trace_action_mask()

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import cProfile
-import pstats
 from pathlib import Path
 
 from optical_networking_gym_v2 import make_env, select_first_fit_action, set_topology_dir
+from optical_networking_gym_v2.instrumentation.profiling import write_cprofile_stats
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -42,11 +42,7 @@ def main() -> None:
     run_episode()
     profiler.disable()
 
-    perf_dir = Path("perf")
-    perf_dir.mkdir(exist_ok=True)
-    output_path = perf_dir / "profile_v2.txt"
-    with output_path.open("w", encoding="utf-8") as file_handler:
-        pstats.Stats(profiler, stream=file_handler).strip_dirs().sort_stats("cumulative").print_stats(30)
+    output_path = write_cprofile_stats(profiler, Path("perf") / "profile_v2.txt")
     print(f"Profile saved to {output_path}")
 
 

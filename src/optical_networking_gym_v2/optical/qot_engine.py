@@ -7,9 +7,9 @@ import numpy as np
 
 from optical_networking_gym_v2.contracts import Modulation, QoTRequest, QoTResult, ServiceQoTUpdate
 from .kernels.qot_kernel import accumulate_link_noise, summarize_candidate_starts
-from optical_networking_gym_v2.envs.runtime_state import RuntimeState
+from optical_networking_gym_v2.runtime.runtime_state import RuntimeState
 from optical_networking_gym_v2.network.topology import PathRecord, TopologyModel
-from optical_networking_gym_v2.simulation.scenario import ScenarioConfig
+from optical_networking_gym_v2.config.scenario import ScenarioConfig
 
 
 _PHI_MODULATION_BY_SE = {

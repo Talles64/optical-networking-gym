@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import cProfile
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import asdict
 import heapq
 import io
+import os
 from pathlib import Path
 import pstats
 import statistics
@@ -19,9 +21,9 @@ from optical_networking_gym_v2.contracts.enums import TrafficMode
 from optical_networking_gym_v2.contracts.modulation import Modulation
 from optical_networking_gym_v2.contracts.traffic import TrafficRecord, TrafficTable
 from optical_networking_gym_v2.network.topology import TopologyModel
-from optical_networking_gym_v2.simulation.scenario import ScenarioConfig
-from optical_networking_gym_v2.simulation.simulator import Simulator
-from optical_networking_gym_v2.simulation.traffic_model import TrafficModel
+from optical_networking_gym_v2.config.scenario import ScenarioConfig
+from optical_networking_gym_v2.runtime.simulator import Simulator
+from optical_networking_gym_v2.runtime.traffic_model import TrafficModel
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -33,6 +35,16 @@ def _durations_summary_us(durations_ns: list[int]) -> tuple[float, float]:
         return 0.0, 0.0
     durations_us = [duration / 1_000.0 for duration in durations_ns]
     return float(statistics.fmean(durations_us)), float(np.percentile(durations_us, 95))
+
+
+@contextmanager
+def _suppress_legacy_output(enabled: bool = True):
+    if not enabled:
+        yield
+        return
+    with open(os.devnull, "w", encoding="utf-8") as sink:
+        with redirect_stdout(sink), redirect_stderr(sink):
+            yield
 
 
 def _topology_path(topology_id: str) -> Path:
@@ -496,52 +508,61 @@ def _run_legacy_replay_episode(
     mean_holding_time: float,
     records: tuple[TrafficRecord, ...],
 ) -> dict[str, object]:
-    env_start = time.perf_counter_ns()
-    legacy_env = _build_legacy_env(
-        topology_id=topology_id,
-        num_spectrum_resources=num_spectrum_resources,
-        k_paths=k_paths,
-        seed=seed,
-        load=load,
-        mean_holding_time=mean_holding_time,
-        episode_length=len(records),
-    )
-    setup_elapsed = time.perf_counter_ns() - env_start
+    with _suppress_legacy_output():
+        env_start = time.perf_counter_ns()
+        legacy_env = _build_legacy_env(
+            topology_id=topology_id,
+            num_spectrum_resources=num_spectrum_resources,
+            k_paths=k_paths,
+            seed=seed,
+            load=load,
+            mean_holding_time=mean_holding_time,
+            episode_length=len(records),
+        )
+        setup_elapsed = time.perf_counter_ns() - env_start
 
-    legacy_env.current_time = 0.0
-    legacy_env.current_service = None
-    release_events: list[tuple[float, int, object]] = []
-    counters = {"accepted": 0, "processed": 0}
+        legacy_env.current_time = 0.0
+        legacy_env.current_service = None
+        release_events: list[tuple[float, int, object]] = []
+        counters = {"accepted": 0, "processed": 0}
 
-    step_durations: list[int] = []
-    statuses: list[str] = []
-    osnrs: list[float] = []
-    active_counts: list[int] = []
-    masks: list[np.ndarray] = []
-    slot_snapshots: list[np.ndarray] = []
+        apply_durations: list[int] = []
+        request_cycle_durations: list[int] = []
+        statuses: list[str] = []
+        osnrs: list[float] = []
+        active_counts: list[int] = []
+        masks: list[np.ndarray] = []
+        slot_snapshots: list[np.ndarray] = []
 
-    for record in records:
-        _legacy_prepare_request(legacy_env, release_events, record)
-        current_mask = _build_legacy_action_mask(legacy_env)
-        masks.append(current_mask.copy())
-        action = _first_valid_action(current_mask)
+        for record in records:
+            cycle_start = time.perf_counter_ns()
+            _legacy_prepare_request(legacy_env, release_events, record)
+            current_mask = _build_legacy_action_mask(legacy_env)
+            masks.append(current_mask.copy())
+            action = _first_valid_action(current_mask)
 
-        step_start = time.perf_counter_ns()
-        outcome = _legacy_step_current(legacy_env, release_events, counters, action)
-        step_elapsed = time.perf_counter_ns() - step_start
-        step_durations.append(step_elapsed)
+            apply_start = time.perf_counter_ns()
+            outcome = _legacy_step_current(legacy_env, release_events, counters, action)
+            apply_elapsed = time.perf_counter_ns() - apply_start
+            cycle_elapsed = time.perf_counter_ns() - cycle_start
+            apply_durations.append(apply_elapsed)
+            request_cycle_durations.append(cycle_elapsed)
 
-        statuses.append(str(outcome["status"]))
-        osnrs.append(float(outcome["osnr"]))
-        active_counts.append(len(legacy_env.topology.graph["running_services"]))
-        slot_snapshots.append(np.asarray(legacy_env.topology.graph["available_slots"], dtype=np.int32).copy())
+            statuses.append(str(outcome["status"]))
+            osnrs.append(float(outcome["osnr"]))
+            active_counts.append(len(legacy_env.topology.graph["running_services"]))
+            slot_snapshots.append(np.asarray(legacy_env.topology.graph["available_slots"], dtype=np.int32).copy())
 
-    step_mean_us, step_p95_us = _durations_summary_us(step_durations)
+    apply_mean_us, apply_p95_us = _durations_summary_us(apply_durations)
+    request_cycle_mean_us, request_cycle_p95_us = _durations_summary_us(request_cycle_durations)
     return {
         "setup_ns": setup_elapsed,
-        "step_durations_ns": step_durations,
-        "step_mean_us": step_mean_us,
-        "step_p95_us": step_p95_us,
+        "apply_durations_ns": apply_durations,
+        "request_cycle_durations_ns": request_cycle_durations,
+        "apply_mean_us": apply_mean_us,
+        "apply_p95_us": apply_p95_us,
+        "request_cycle_mean_us": request_cycle_mean_us,
+        "request_cycle_p95_us": request_cycle_p95_us,
         "statuses": tuple(statuses),
         "osnrs": tuple(osnrs),
         "active_counts": tuple(active_counts),
@@ -561,6 +582,7 @@ def compare_simulator_episode_with_legacy(
     load: float = 10.0,
     mean_holding_time: float = 100.0,
     osnr_tolerance: float = 1e-9,
+    include_records: bool = False,
 ) -> dict[str, object]:
     table, records = _capture_dynamic_table(
         topology_id=topology_id,
@@ -612,10 +634,9 @@ def compare_simulator_episode_with_legacy(
             osnr_matches = False
             break
 
-    return {
+    result = {
         "topology_id": topology_id,
         "request_count": request_count,
-        "records": tuple(asdict(record) for record in records),
         "reverse_request_count": sum(1 for record in records if record.source_id > record.destination_id),
         "status_sequence": tuple(v2["statuses"]),
         "legacy_status_sequence": tuple(legacy["statuses"]),
@@ -628,6 +649,9 @@ def compare_simulator_episode_with_legacy(
             v2["episode_services_accepted"] == legacy["episode_services_accepted"]
         ),
     }
+    if include_records:
+        result["records"] = tuple(asdict(record) for record in records)
+    return result
 
 
 def benchmark_simulator_episode(
@@ -731,7 +755,8 @@ def benchmark_integrated_episode_vs_legacy(
     v2_step_durations: list[int] = []
     v2_episode_durations: list[int] = []
     legacy_setup_durations: list[int] = []
-    legacy_step_durations: list[int] = []
+    legacy_apply_durations: list[int] = []
+    legacy_request_cycle_durations: list[int] = []
     legacy_episode_durations: list[int] = []
 
     for repeat_index in range(repeats + warmup):
@@ -758,7 +783,10 @@ def benchmark_integrated_episode_vs_legacy(
         v2_episode_durations.append(v2_episode_elapsed)
 
         legacy_setup_durations.append(int(legacy_result["setup_ns"]))
-        legacy_step_durations.extend(int(duration) for duration in legacy_result["step_durations_ns"])
+        legacy_apply_durations.extend(int(duration) for duration in legacy_result["apply_durations_ns"])
+        legacy_request_cycle_durations.extend(
+            int(duration) for duration in legacy_result["request_cycle_durations_ns"]
+        )
         legacy_episode_durations.append(legacy_episode_elapsed)
 
     comparison = compare_simulator_episode_with_legacy(
@@ -775,7 +803,8 @@ def benchmark_integrated_episode_vs_legacy(
     v2_step_mean_us, v2_step_p95_us = _durations_summary_us(v2_step_durations)
     v2_episode_mean_us, v2_episode_p95_us = _durations_summary_us(v2_episode_durations)
     legacy_setup_mean_us, legacy_setup_p95_us = _durations_summary_us(legacy_setup_durations)
-    legacy_step_mean_us, legacy_step_p95_us = _durations_summary_us(legacy_step_durations)
+    legacy_apply_mean_us, legacy_apply_p95_us = _durations_summary_us(legacy_apply_durations)
+    legacy_step_mean_us, legacy_step_p95_us = _durations_summary_us(legacy_request_cycle_durations)
     legacy_episode_mean_us, legacy_episode_p95_us = _durations_summary_us(legacy_episode_durations)
 
     return {
@@ -792,6 +821,8 @@ def benchmark_integrated_episode_vs_legacy(
         "v2_episode_p95_us": v2_episode_p95_us,
         "legacy_setup_mean_us": legacy_setup_mean_us,
         "legacy_setup_p95_us": legacy_setup_p95_us,
+        "legacy_apply_mean_us": legacy_apply_mean_us,
+        "legacy_apply_p95_us": legacy_apply_p95_us,
         "legacy_step_mean_us": legacy_step_mean_us,
         "legacy_step_p95_us": legacy_step_p95_us,
         "legacy_episode_mean_us": legacy_episode_mean_us,
@@ -799,6 +830,10 @@ def benchmark_integrated_episode_vs_legacy(
         "v2_step_speedup_vs_legacy": (
             legacy_step_mean_us / v2_step_mean_us if v2_step_mean_us > 0 else 0.0
         ),
+        "v2_episode_speedup_vs_legacy": (
+            legacy_episode_mean_us / v2_episode_mean_us if v2_episode_mean_us > 0 else 0.0
+        ),
+        "legacy_step_definition": "full request cycle including prepare, mask build, and apply",
         "parity": comparison,
     }
 

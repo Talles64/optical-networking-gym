@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from optical_networking_gym_v2.contracts import Allocation, Status
-from optical_networking_gym_v2.envs.runtime_state import RuntimeState
+from optical_networking_gym_v2.runtime.runtime_state import RuntimeState
 from optical_networking_gym_v2.optical.kernels.allocation_kernel import candidate_starts_array
 from .topology import PathRecord
 

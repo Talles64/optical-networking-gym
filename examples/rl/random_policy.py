@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from optical_networking_gym_v2 import make_env, set_topology_dir
+from optical_networking_gym_v2.heuristics.masked_heuristics import select_random_action
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -35,8 +36,7 @@ def run_episode(seed: int = 42) -> dict[str, float | int]:
         mask = info.get("mask")
         if mask is None:
             mask = env.action_masks()
-        valid_actions = np.flatnonzero(mask)
-        action = int(rng.choice(valid_actions))
+        action = select_random_action(mask, rng=rng)
         _, reward, terminated, truncated, info = env.step(action)
         total_reward += float(reward)
         steps += 1

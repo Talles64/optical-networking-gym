@@ -8,7 +8,7 @@ from optical_networking_gym_v2.contracts import (
     Status,
 )
 from optical_networking_gym_v2.network.topology import TopologyModel
-from optical_networking_gym_v2.simulation.scenario import ScenarioConfig
+from optical_networking_gym_v2.config.scenario import ScenarioConfig
 
 
 class RewardFunction:

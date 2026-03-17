@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from optical_networking_gym_v2.simulation.request_analysis import RequestAnalysis
+    from optical_networking_gym_v2.runtime.request_analysis import RequestAnalysis
     from .step import StatisticsSnapshot, StepTransition
 
 

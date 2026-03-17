@@ -1,69 +1,21 @@
 from __future__ import annotations
 
-import csv
+import importlib.util
 from pathlib import Path
 
-from optical_networking_gym_v2 import make_env, select_first_fit_action, set_topology_dir
+
+_MODULE_PATH = Path(__file__).resolve().parent / "heuristics" / "load_sweep.py"
+_SPEC = importlib.util.spec_from_file_location("optical_networking_gym_v2_examples_heuristics_load_sweep", _MODULE_PATH)
+if _SPEC is None or _SPEC.loader is None:
+    raise RuntimeError(f"could not load example module at {_MODULE_PATH}")
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+
+main = _MODULE.main
+run_load_sweep = _MODULE.run_load_sweep
 
 
-TOPOLOGY_DIR = Path(__file__).resolve().parents[2] / "examples" / "topologies"
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
-
-
-def run_load_sweep(loads: tuple[float, ...] = (100.0, 200.0, 300.0, 400.0)) -> Path:
-    set_topology_dir(TOPOLOGY_DIR)
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = RESULTS_DIR / "load_sweep__first_fit__nobel-eu.csv"
-
-    with output_path.open("w", newline="", encoding="utf-8") as file_handler:
-        writer = csv.writer(file_handler)
-        writer.writerow(
-            [
-                "load",
-                "episode_services_processed",
-                "episode_services_accepted",
-                "episode_service_blocking_rate",
-                "episode_bit_rate_blocking_rate",
-                "total_reward",
-            ]
-        )
-        for load in loads:
-            env = make_env(
-                topology_name="nobel-eu",
-                modulation_names="BPSK, QPSK, 8QAM, 16QAM, 32QAM, 64QAM",
-                seed=42,
-                load=load,
-                episode_length=100,
-                modulations_to_consider=4,
-                topology_dir=TOPOLOGY_DIR,
-            )
-            _, info = env.reset(seed=42)
-            total_reward = 0.0
-            while True:
-                mask = info.get("mask")
-                if mask is None:
-                    mask = env.action_masks()
-                action = select_first_fit_action(mask)
-                _, reward, terminated, truncated, info = env.step(action)
-                total_reward += float(reward)
-                if terminated or truncated:
-                    break
-            writer.writerow(
-                [
-                    load,
-                    int(info.get("episode_services_processed", 0)),
-                    int(info.get("episode_services_accepted", 0)),
-                    float(info.get("episode_service_blocking_rate", 0.0)),
-                    float(info.get("episode_bit_rate_blocking_rate", 0.0)),
-                    total_reward,
-                ]
-            )
-    return output_path
-
-
-def main() -> None:
-    output_path = run_load_sweep()
-    print(f"Load sweep saved to {output_path}")
+__all__ = ["main", "run_load_sweep"]
 
 
 if __name__ == "__main__":

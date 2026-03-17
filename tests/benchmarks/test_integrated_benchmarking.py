@@ -14,11 +14,15 @@ def test_integrated_benchmark_returns_expected_keys() -> None:
     assert result["v2_reset_mean_us"] >= 0.0
     assert result["v2_step_mean_us"] >= 0.0
     assert result["legacy_step_mean_us"] >= 0.0
+    assert result["legacy_apply_mean_us"] >= 0.0
     assert result["v2_episode_mean_us"] >= 0.0
     assert result["legacy_episode_mean_us"] >= 0.0
+    assert result["v2_episode_speedup_vs_legacy"] >= 0.0
+    assert result["legacy_step_definition"].startswith("full request cycle")
     assert result["parity"]["status_matches"] is True
     assert result["parity"]["mask_matches"] is True
     assert result["parity"]["slot_matches"] is True
+    assert "records" not in result["parity"]
 
 
 def test_simulator_profile_returns_ranked_entries() -> None:

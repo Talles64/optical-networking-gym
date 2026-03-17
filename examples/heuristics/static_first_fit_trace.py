@@ -12,6 +12,7 @@ from optical_networking_gym_v2 import (
     get_modulations,
     select_first_fit_action,
 )
+from optical_networking_gym_v2.instrumentation.traces import write_step_trace_jsonl
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -119,12 +120,7 @@ def save_results(summary: dict[str, object], trace: dict[str, object]) -> tuple[
     summary_path = RESULTS_DIR / f"{base_name}.json"
     trace_path = RESULTS_DIR / f"{base_name}.trace.jsonl"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    with trace_path.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(trace["header"], separators=(",", ":")) + "\n")
-        for step in trace["steps"]:
-            handle.write(json.dumps(step, separators=(",", ":")) + "\n")
-        handle.write(json.dumps(trace["footer"], separators=(",", ":")) + "\n")
-    return summary_path, trace_path
+    return summary_path, write_step_trace_jsonl(trace, trace_path)
 
 
 def main() -> None:

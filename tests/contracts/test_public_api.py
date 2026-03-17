@@ -17,6 +17,7 @@ from optical_networking_gym_v2 import (
     RewardFunction,
     RewardInput,
     RewardProfile,
+    RuntimeHeuristicContext,
     RequestAnalysisEngine,
     ServiceRequest,
     Simulator,
@@ -28,6 +29,9 @@ from optical_networking_gym_v2 import (
     TrafficMode,
     TrafficRecord,
     TrafficTable,
+    build_runtime_heuristic_context,
+    select_random_action,
+    select_random_runtime_action,
 )
 
 
@@ -51,11 +55,15 @@ def test_public_api_exports_contracts() -> None:
     assert RewardInput is not None
     assert RewardProfile.BALANCED.value == "balanced"
     assert RequestAnalysisEngine is not None
+    assert RuntimeHeuristicContext is not None
     assert Simulator is not None
     assert Statistics is not None
     assert StatisticsSnapshot is not None
     assert StepInfo is not None
     assert StepTransition is not None
+    assert build_runtime_heuristic_context is not None
+    assert select_random_action is not None
+    assert select_random_runtime_action is not None
     assert TrafficMode.DYNAMIC.value == "dynamic"
     assert MaskMode.RESOURCE_AND_QOT.value == "resource_and_qot"
     assert Status.BLOCKED_QOT.value == "blocked_qot"

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from optical_networking_gym_v2.simulation.request_analysis import RequestAnalysis
+    from optical_networking_gym_v2.runtime.request_analysis import RequestAnalysis
 
 
 @dataclass(frozen=True, slots=True)
