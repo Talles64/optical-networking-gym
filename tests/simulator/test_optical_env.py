@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -65,10 +66,49 @@ def test_optical_env_exposes_spaces_and_action_masks() -> None:
 
     assert env.action_space.n == 97
     assert env.observation_space.shape == observation.shape
-    assert np.array_equal(env.action_masks(), info["mask"])
+    assert env.action_masks() is info["mask"]
+    assert info["mask"] is not None
+    assert info["mask"].flags.writeable is False
 
     action = _first_valid_action(info["mask"])
     _, _, _, _, step_info = env.step(action)
 
     assert env.action_masks() is not None
-    assert np.array_equal(env.action_masks(), step_info["mask"])
+    assert env.action_masks() is step_info["mask"]
+    assert step_info["mask"] is not None
+    assert step_info["mask"].flags.writeable is False
+
+
+def test_optical_env_returns_empty_observation_when_disabled() -> None:
+    config = replace(_config(), enable_observation=False)
+    env = OpticalEnv(config, _topology(), episode_length=2)
+
+    observation, info = env.reset(seed=7)
+    next_observation, _, terminated, truncated, _ = env.step(_first_valid_action(info["mask"]))
+
+    assert env.observation_space.shape == (0,)
+    assert observation.shape == (0,)
+    assert observation.dtype == np.float32
+    if not terminated and not truncated:
+        assert next_observation.shape == (0,)
+        assert next_observation.dtype == np.float32
+
+
+def test_optical_env_can_disable_action_mask_everywhere() -> None:
+    config = replace(_config(), enable_action_mask=False)
+    env = OpticalEnv(config, _topology(), episode_length=2)
+
+    _, info = env.reset(seed=7)
+
+    assert info["mask"] is None
+    assert env.action_masks() is None
+
+
+def test_optical_env_can_hide_mask_from_info_but_keep_action_masks() -> None:
+    config = replace(_config(), include_mask_in_info=False)
+    env = OpticalEnv(config, _topology(), episode_length=2)
+
+    _, info = env.reset(seed=7)
+
+    assert info["mask"] is None
+    assert env.action_masks() is not None

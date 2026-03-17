@@ -163,6 +163,30 @@ def test_request_analysis_exposes_path_slot_flags_consistent_with_mask_logic() -
     assert np.all(analysis.path_slot_features[0, 0:4, 5] == 0.0)
 
 
+def test_request_analysis_can_build_lean_and_inspection_variants_separately() -> None:
+    topology = _topology()
+    config = ScenarioConfig(
+        scenario_id="request_analysis_lean",
+        topology_id="ring_4",
+        k_paths=2,
+        num_spectrum_resources=24,
+        modulations=_config().modulations,
+        modulations_to_consider=2,
+        enable_observation=False,
+    )
+    engine = RequestAnalysisEngine(config, topology, QoTEngine(config, topology))
+    state = RuntimeState(config, topology)
+    request = _request(48)
+
+    lean = engine.build(state, request)
+    rich = engine.build(state, request, include_inspection=True)
+
+    assert lean is not rich
+    assert lean.inspection is None
+    assert rich.inspection is not None
+    assert engine.cache_misses == 2
+
+
 def test_request_analysis_requires_modulations() -> None:
     topology = _topology()
     config = ScenarioConfig(

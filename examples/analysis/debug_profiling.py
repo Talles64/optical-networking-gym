@@ -7,7 +7,8 @@ from pathlib import Path
 from optical_networking_gym_v2 import make_env, select_first_fit_action, set_topology_dir
 
 
-TOPOLOGY_DIR = Path(__file__).resolve().parents[2] / "examples" / "topologies"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
 
 
 def run_episode() -> None:
@@ -21,12 +22,15 @@ def run_episode() -> None:
         topology_dir=TOPOLOGY_DIR,
     )
     _, info = env.reset(seed=10)
+
     while True:
         mask = info.get("mask")
         if mask is None:
             mask = env.action_masks()
+
         action = select_first_fit_action(mask)
         _, _, terminated, truncated, info = env.step(action)
+
         if terminated or truncated:
             break
 

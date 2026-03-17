@@ -34,20 +34,23 @@ class _LinkInterferenceCache:
 @dataclass(slots=True)
 class _PathSummaryStaticInputs:
     link_ids: tuple[int, ...]
-    span_lengths: tuple[np.ndarray, ...]
-    span_attenuation: tuple[np.ndarray, ...]
-    span_noise_figure: tuple[np.ndarray, ...]
+    span_offsets: np.ndarray
+    span_lengths: np.ndarray
+    span_attenuation: np.ndarray
+    span_noise_figure: np.ndarray
 
 
 @dataclass(slots=True)
 class _PreparedCandidateSummaryInputs:
-    span_lengths: tuple[np.ndarray, ...]
-    span_attenuation: tuple[np.ndarray, ...]
-    span_noise_figure: tuple[np.ndarray, ...]
-    running_service_ids: tuple[np.ndarray, ...]
-    running_center_frequencies: tuple[np.ndarray, ...]
-    running_bandwidths: tuple[np.ndarray, ...]
-    running_phi_modulation: tuple[np.ndarray, ...]
+    span_offsets: np.ndarray
+    span_lengths: np.ndarray
+    span_attenuation: np.ndarray
+    span_noise_figure: np.ndarray
+    running_offsets: np.ndarray
+    running_service_ids: np.ndarray
+    running_center_frequencies: np.ndarray
+    running_bandwidths: np.ndarray
+    running_phi_modulation: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,16 +226,39 @@ class QoTEngine:
         running_descriptors = tuple(
             self._link_running_service_arrays(state, link_id) for link_id in static_inputs.link_ids
         )
+        running_offsets = np.zeros(len(running_descriptors) + 1, dtype=np.int32)
+        total_running = 0
+        for link_index, descriptor in enumerate(running_descriptors, start=1):
+            total_running += int(descriptor.service_ids.shape[0])
+            running_offsets[link_index] = total_running
+
+        running_service_ids = np.empty(total_running, dtype=np.int32)
+        running_center_frequencies = np.empty(total_running, dtype=np.float64)
+        running_bandwidths = np.empty(total_running, dtype=np.float64)
+        running_phi_modulation = np.empty(total_running, dtype=np.float64)
+
+        cursor = 0
+        for descriptor in running_descriptors:
+            count = int(descriptor.service_ids.shape[0])
+            if count == 0:
+                continue
+            next_cursor = cursor + count
+            running_service_ids[cursor:next_cursor] = descriptor.service_ids
+            running_center_frequencies[cursor:next_cursor] = descriptor.center_frequencies
+            running_bandwidths[cursor:next_cursor] = descriptor.bandwidths
+            running_phi_modulation[cursor:next_cursor] = descriptor.phi_modulation
+            cursor = next_cursor
+
         return _PreparedCandidateSummaryInputs(
+            span_offsets=static_inputs.span_offsets,
             span_lengths=static_inputs.span_lengths,
             span_attenuation=static_inputs.span_attenuation,
             span_noise_figure=static_inputs.span_noise_figure,
-            running_service_ids=tuple(descriptor.service_ids for descriptor in running_descriptors),
-            running_center_frequencies=tuple(
-                descriptor.center_frequencies for descriptor in running_descriptors
-            ),
-            running_bandwidths=tuple(descriptor.bandwidths for descriptor in running_descriptors),
-            running_phi_modulation=tuple(descriptor.phi_modulation for descriptor in running_descriptors),
+            running_offsets=running_offsets,
+            running_service_ids=running_service_ids,
+            running_center_frequencies=running_center_frequencies,
+            running_bandwidths=running_bandwidths,
+            running_phi_modulation=running_phi_modulation,
         )
 
     def _summarize_candidate_starts_prepared(
@@ -257,9 +283,11 @@ class QoTEngine:
                 worst_link_nli_share=empty_float.copy(),
             )
         meets_threshold, osnr_margin, nli_share, worst_link_nli_share = summarize_candidate_starts(
+            prepared_inputs.span_offsets,
             prepared_inputs.span_lengths,
             prepared_inputs.span_attenuation,
             prepared_inputs.span_noise_figure,
+            prepared_inputs.running_offsets,
             prepared_inputs.running_service_ids,
             prepared_inputs.running_center_frequencies,
             prepared_inputs.running_bandwidths,
@@ -285,15 +313,32 @@ class QoTEngine:
         if cached is not None:
             return cached
 
+        span_offsets = np.zeros(len(path.link_ids) + 1, dtype=np.int32)
+        total_spans = 0
+        for link_index, link_id in enumerate(path.link_ids, start=1):
+            total_spans += int(self._link_span_lengths_km[link_id].shape[0])
+            span_offsets[link_index] = total_spans
+
+        span_lengths = np.empty(total_spans, dtype=np.float64)
+        span_attenuation = np.empty(total_spans, dtype=np.float64)
+        span_noise_figure = np.empty(total_spans, dtype=np.float64)
+
+        cursor = 0
+        for link_id in path.link_ids:
+            link_span_lengths = self._link_span_lengths_km[link_id]
+            count = int(link_span_lengths.shape[0])
+            next_cursor = cursor + count
+            span_lengths[cursor:next_cursor] = link_span_lengths
+            span_attenuation[cursor:next_cursor] = self._link_span_attenuation_normalized[link_id]
+            span_noise_figure[cursor:next_cursor] = self._link_span_noise_figure_normalized[link_id]
+            cursor = next_cursor
+
         static_inputs = _PathSummaryStaticInputs(
             link_ids=path.link_ids,
-            span_lengths=tuple(self._link_span_lengths_km[link_id] for link_id in path.link_ids),
-            span_attenuation=tuple(
-                self._link_span_attenuation_normalized[link_id] for link_id in path.link_ids
-            ),
-            span_noise_figure=tuple(
-                self._link_span_noise_figure_normalized[link_id] for link_id in path.link_ids
-            ),
+            span_offsets=span_offsets,
+            span_lengths=span_lengths,
+            span_attenuation=span_attenuation,
+            span_noise_figure=span_noise_figure,
         )
         self._path_summary_static_cache[path.id] = static_inputs
         return static_inputs

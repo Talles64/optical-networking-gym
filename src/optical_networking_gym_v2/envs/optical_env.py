@@ -38,10 +38,15 @@ if gym is not None:
                 capture_step_trace=capture_step_trace,
             )
             self.action_space = gym.spaces.Discrete(self.simulator.total_actions)
+            observation_shape = (
+                (0,)
+                if not config.enable_observation
+                else (self.simulator.observation_builder.schema.total_size,)
+            )
             self.observation_space = gym.spaces.Box(
                 low=-1.0,
                 high=1.0,
-                shape=(self.simulator.observation_builder.schema.total_size,),
+                shape=observation_shape,
                 dtype=np.float32,
             )
 

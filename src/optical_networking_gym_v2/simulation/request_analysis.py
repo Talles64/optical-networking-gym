@@ -117,6 +117,12 @@ class _FreeRunAnalysis:
 
 
 @dataclass(slots=True)
+class RequestAnalysisInspection:
+    common_free_masks: np.ndarray
+    link_metrics: np.ndarray
+
+
+@dataclass(slots=True)
 class RequestAnalysis:
     config: ScenarioConfig
     topology: TopologyModel
@@ -125,7 +131,6 @@ class RequestAnalysis:
     request: ServiceRequest
     paths: tuple[PathRecord, ...]
     modulation_indices: tuple[int, ...]
-    common_free_masks: np.ndarray
     resource_valid_starts: np.ndarray
     qot_valid_starts: np.ndarray
     osnr_margin_by_start: np.ndarray
@@ -134,10 +139,13 @@ class RequestAnalysis:
     fragmentation_damage_num_blocks_by_start: np.ndarray
     fragmentation_damage_largest_block_by_start: np.ndarray
     required_slots_by_path_mod: np.ndarray
-    action_mask: np.ndarray
-    link_metrics: np.ndarray
+    action_mask: np.ndarray | None
+    mean_link_entropy: float
+    path_route_cuts_norm_by_path: np.ndarray
+    path_route_rss_by_path: np.ndarray
     free_slots_ratio: float
     active_services_norm: float
+    inspection: RequestAnalysisInspection | None = None
     _request_features: np.ndarray | None = None
     _global_features: np.ndarray | None = None
     _path_features: np.ndarray | None = None
@@ -184,8 +192,24 @@ class RequestAnalysis:
         return self._path_slot_features
 
     @property
+    def common_free_masks(self) -> np.ndarray:
+        if self.inspection is None:
+            raise RuntimeError("common_free_masks are unavailable when observation inspection is disabled")
+        return self.inspection.common_free_masks
+
+    @property
+    def link_metrics(self) -> np.ndarray:
+        if self.inspection is None:
+            raise RuntimeError("link_metrics are unavailable when observation inspection is disabled")
+        return self.inspection.link_metrics
+
+    @property
     def has_valid_non_reject_action(self) -> bool:
-        return bool(self.action_mask.any())
+        if self.action_mask is not None:
+            return bool(self.action_mask.any())
+        if self.config.mask_mode is MaskMode.RESOURCE_ONLY:
+            return bool(self.resource_valid_starts.any())
+        return bool(self.qot_valid_starts.any())
 
     def modulation_offset_for_index(self, modulation_index: int) -> int | None:
         try:
@@ -269,20 +293,28 @@ class RequestAnalysisEngine:
     def path_slot_feature_names(self) -> tuple[str, ...]:
         return PATH_SLOT_FEATURE_NAMES
 
-    def build(self, state: RuntimeState, request: ServiceRequest) -> RequestAnalysis:
+    def build(
+        self,
+        state: RuntimeState,
+        request: ServiceRequest,
+        *,
+        include_inspection: bool = False,
+    ) -> RequestAnalysis:
+        needs_inspection = include_inspection or self.config.enable_observation
         cache_key = (
             state.state_id,
             state.allocation_state_version,
             request.source_id,
             request.destination_id,
             float(request.bit_rate),
+            needs_inspection,
         )
         cached = self._analysis_cache.get(cache_key)
         if cached is not None:
             self.cache_hits += 1
             return cached
 
-        analysis = self._build_analysis(state, request)
+        analysis = self._build_analysis(state, request, include_inspection=needs_inspection)
         self._analysis_cache[cache_key] = analysis
         self.cache_misses += 1
         return analysis
@@ -290,7 +322,13 @@ class RequestAnalysisEngine:
     def clear_cache(self) -> None:
         self._analysis_cache.clear()
 
-    def _build_analysis(self, state: RuntimeState, request: ServiceRequest) -> RequestAnalysis:
+    def _build_analysis(
+        self,
+        state: RuntimeState,
+        request: ServiceRequest,
+        *,
+        include_inspection: bool,
+    ) -> RequestAnalysis:
         paths = self.topology.get_paths_by_ids(request.source_id, request.destination_id)[: self.config.k_paths]
         total_slots = self.config.num_spectrum_resources
         max_paths = self.config.k_paths
@@ -316,6 +354,7 @@ class RequestAnalysisEngine:
 
         common_free_masks = np.zeros((max_paths, total_slots), dtype=np.bool_)
         link_metrics = _build_link_metrics(state, self.topology, total_slots)
+        mean_link_entropy = float(link_metrics[:, 1].mean()) if link_metrics.size else 0.0
         path_free_runs: list[_FreeRunAnalysis] = []
 
         for path_index, path in enumerate(paths):
@@ -347,17 +386,23 @@ class RequestAnalysisEngine:
             dtype=np.float32,
         )
 
-        for path_index, path in enumerate(paths):
-            free_mask = common_free_masks[path_index, :]
-            common_analysis = path_free_runs[path_index]
-            prepared_qot_inputs = None
-            if (
-                self.config.mask_mode is not MaskMode.RESOURCE_ONLY
-                and self.config.qot_constraint != "DIST"
-            ):
-                prepared_qot_inputs = self.qot_engine._prepare_candidate_summary_inputs(state, path)
-            for modulation_index, modulation in enumerate(self.config.modulations):
-                required_slots = int(required_slots_by_modulation[modulation_index])
+        prepared_qot_inputs_by_path: list[object | None] = []
+        for path in paths:
+            if self.config.mask_mode is MaskMode.RESOURCE_ONLY or self.config.qot_constraint == "DIST":
+                prepared_qot_inputs_by_path.append(None)
+                continue
+            prepared_qot_inputs_by_path.append(self.qot_engine._prepare_candidate_summary_inputs(state, path))
+
+        max_feasible_modulation_index: int | None = None
+        lowest_required_modulation_index = 0
+        for modulation_index in range(full_modulation_count - 1, -1, -1):
+            modulation = self.config.modulations[modulation_index]
+            required_slots = int(required_slots_by_modulation[modulation_index])
+            modulation_has_feasible_path = False
+
+            for path_index, path in enumerate(paths):
+                free_mask = common_free_masks[path_index, :]
+                common_analysis = path_free_runs[path_index]
                 required_slots_full[path_index, modulation_index] = required_slots
                 if required_slots > total_slots:
                     continue
@@ -379,15 +424,17 @@ class RequestAnalysisEngine:
                 )
 
                 if self.config.mask_mode is MaskMode.RESOURCE_ONLY:
+                    modulation_has_feasible_path = True
                     continue
 
                 if self.config.qot_constraint == "DIST":
                     if path.length_km <= modulation.maximum_length:
                         qot_valid_full[path_index, modulation_index, candidate_indices] = True
+                        modulation_has_feasible_path = True
                     continue
 
                 batch = self.qot_engine._summarize_candidate_starts_prepared(
-                    prepared_inputs=prepared_qot_inputs,
+                    prepared_inputs=prepared_qot_inputs_by_path[path_index],
                     service_id=request.service_id,
                     service_num_slots=required_slots,
                     candidate_starts=candidate_indices,
@@ -399,12 +446,25 @@ class RequestAnalysisEngine:
                     batch.worst_link_nli_share
                 )
                 qot_valid_full[path_index, modulation_index, candidate_indices] = batch.meets_threshold
+                if batch.meets_threshold.any():
+                    modulation_has_feasible_path = True
 
-        modulation_indices = _select_modulation_indices(
+            if modulation_has_feasible_path and max_feasible_modulation_index is None:
+                max_feasible_modulation_index = modulation_index
+                lowest_required_modulation_index = max(
+                    0,
+                    modulation_index - (selected_count - 1),
+                )
+
+            if (
+                max_feasible_modulation_index is not None
+                and modulation_index <= lowest_required_modulation_index
+            ):
+                break
+
+        modulation_indices = _modulation_window_from_max_feasible(
             config=self.config,
-            paths=paths,
-            resource_valid_starts=resource_valid_full,
-            qot_valid_starts=qot_valid_full,
+            max_feasible_modulation_index=max_feasible_modulation_index,
         )
         selected_positions = np.asarray(modulation_indices, dtype=np.intp)
         resource_valid = _pad_array(
@@ -448,17 +508,41 @@ class RequestAnalysisEngine:
             0.0,
         )
 
-        action_mask = np.zeros(max_paths * selected_count * total_slots, dtype=np.uint8)
-        path_stride = selected_count * total_slots
-        for path_index in range(max_paths):
-            for modulation_offset in range(selected_count):
-                base_index = (path_index * path_stride) + (modulation_offset * total_slots)
-                flags = (
-                    resource_valid[path_index, modulation_offset, :]
-                    if self.config.mask_mode is MaskMode.RESOURCE_ONLY
-                    else qot_valid[path_index, modulation_offset, :]
-                )
-                action_mask[base_index : base_index + total_slots] = flags.astype(np.uint8)
+        path_route_cuts_norm_by_path = np.zeros(max_paths, dtype=np.float32)
+        path_route_rss_by_path = np.zeros(max_paths, dtype=np.float32)
+        for path_index, path in enumerate(paths):
+            if not path.link_ids:
+                continue
+            route_cuts_sum = 0.0
+            route_rss_sum = 0.0
+            link_count = len(path.link_ids)
+            for link_id in path.link_ids:
+                metrics = link_metrics[int(link_id)]
+                route_cuts_sum += float(metrics[4])
+                route_rss_sum += float(metrics[5])
+            path_route_cuts_norm_by_path[path_index] = route_cuts_sum / link_count
+            path_route_rss_by_path[path_index] = route_rss_sum / link_count
+
+        action_mask: np.ndarray | None = None
+        if self.config.enable_action_mask:
+            action_mask = np.zeros(max_paths * selected_count * total_slots, dtype=np.uint8)
+            path_stride = selected_count * total_slots
+            for path_index in range(max_paths):
+                for modulation_offset in range(selected_count):
+                    base_index = (path_index * path_stride) + (modulation_offset * total_slots)
+                    flags = (
+                        resource_valid[path_index, modulation_offset, :]
+                        if self.config.mask_mode is MaskMode.RESOURCE_ONLY
+                        else qot_valid[path_index, modulation_offset, :]
+                    )
+                    action_mask[base_index : base_index + total_slots] = flags
+
+        inspection: RequestAnalysisInspection | None = None
+        if include_inspection:
+            inspection = RequestAnalysisInspection(
+                common_free_masks=common_free_masks,
+                link_metrics=link_metrics,
+            )
 
         return RequestAnalysis(
             config=self.config,
@@ -468,7 +552,6 @@ class RequestAnalysisEngine:
             request=request,
             paths=tuple(paths),
             modulation_indices=modulation_indices,
-            common_free_masks=common_free_masks,
             resource_valid_starts=resource_valid,
             qot_valid_starts=qot_valid,
             osnr_margin_by_start=osnr_margin,
@@ -478,9 +561,12 @@ class RequestAnalysisEngine:
             fragmentation_damage_largest_block_by_start=fragmentation_damage_largest_block,
             required_slots_by_path_mod=required_slots,
             action_mask=action_mask,
-            link_metrics=link_metrics,
+            mean_link_entropy=mean_link_entropy,
+            path_route_cuts_norm_by_path=path_route_cuts_norm_by_path,
+            path_route_rss_by_path=path_route_rss_by_path,
             free_slots_ratio=free_slots_ratio,
             active_services_norm=active_services_norm,
+            inspection=inspection,
         )
 
 
@@ -543,38 +629,24 @@ def _fragmentation_damage_by_candidates(
     return num_blocks_damage, largest_block_damage
 
 
-def _select_modulation_indices(
+def _modulation_window_from_max_feasible(
     *,
     config: ScenarioConfig,
-    paths: tuple[PathRecord, ...],
-    resource_valid_starts: np.ndarray,
-    qot_valid_starts: np.ndarray,
+    max_feasible_modulation_index: int | None,
 ) -> tuple[int, ...]:
-    max_modulation_index: int | None = None
-    for modulation_index in range(len(config.modulations) - 1, -1, -1):
-        for path_index, path in enumerate(paths):
-            if config.mask_mode is MaskMode.RESOURCE_ONLY:
-                feasible = bool(resource_valid_starts[path_index, modulation_index, :].any())
-            elif config.qot_constraint == "DIST":
-                feasible = bool(qot_valid_starts[path_index, modulation_index, :].any()) and (
-                    path.length_km <= config.modulations[modulation_index].maximum_length
-                )
-            else:
-                feasible = bool(qot_valid_starts[path_index, modulation_index, :].any())
-            if feasible:
-                max_modulation_index = modulation_index
-                break
-        if max_modulation_index is not None:
-            break
-
-    if max_modulation_index is None:
-        max_modulation_index = config.modulations_to_consider - 1
+    if max_feasible_modulation_index is None:
+        max_feasible_modulation_index = config.modulations_to_consider - 1
     else:
-        max_modulation_index = max(max_modulation_index, config.modulations_to_consider - 1)
+        max_feasible_modulation_index = max(
+            max_feasible_modulation_index,
+            config.modulations_to_consider - 1,
+        )
 
-    start_index = max(0, max_modulation_index - (config.modulations_to_consider - 1))
+    start_index = max(0, max_feasible_modulation_index - (config.modulations_to_consider - 1))
     modulation_indices = tuple(
-        reversed(tuple(range(start_index, max_modulation_index + 1))[: config.modulations_to_consider])
+        reversed(
+            tuple(range(start_index, max_feasible_modulation_index + 1))[: config.modulations_to_consider]
+        )
     )
     if len(modulation_indices) != config.modulations_to_consider:
         return tuple(range(config.modulations_to_consider - 1, -1, -1))

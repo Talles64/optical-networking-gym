@@ -20,6 +20,11 @@ from optical_networking_gym_v2.optical.qot_engine import QoTEngine
 from optical_networking_gym_v2.rl.action_mask import ActionMask
 from optical_networking_gym_v2.rl.observation import Observation
 from optical_networking_gym_v2.rl.reward_function import RewardFunction
+from optical_networking_gym_v2.simulation.action_codec import (
+    decode_action,
+    reject_action,
+    total_actions,
+)
 from optical_networking_gym_v2.stats.statistics import Statistics
 from .request_analysis import RequestAnalysis, RequestAnalysisEngine
 from .scenario import ScenarioConfig
@@ -38,28 +43,21 @@ class Simulator:
     ) -> None:
         if episode_length <= 0:
             raise ValueError("episode_length must be positive")
-        self.base_config = config
-        self.config = config
+        normalized_config = replace(
+            config,
+            episode_length=episode_length,
+            capture_traffic_table=capture_traffic_table,
+            capture_step_trace=capture_step_trace,
+        )
+        self.base_config = normalized_config
+        self.config = normalized_config
         self.topology = topology
         self.episode_length = episode_length
         self.capture_traffic_table = capture_traffic_table
         self.capture_step_trace = capture_step_trace
-
-        self.qot_engine = QoTEngine(config, topology)
-        self.analysis_engine = RequestAnalysisEngine(config, topology, self.qot_engine)
-        self.action_mask_builder = ActionMask(
-            config,
-            topology,
-            self.qot_engine,
-            analysis_engine=self.analysis_engine,
-        )
-        self.observation_builder = Observation(
-            config,
-            topology,
-            self.analysis_engine,
-        )
-        self.reward_function = RewardFunction(config, topology)
-        self.step_info_builder = StepInfo(config)
+        self._helper_structure_key: tuple[object, ...] | None = None
+        self._empty_observation = np.empty(0, dtype=np.float32)
+        self._build_runtime_helpers(normalized_config)
 
         self.traffic_model: TrafficModel | None = None
         self.state: RuntimeState | None = None
@@ -74,7 +72,7 @@ class Simulator:
 
     @property
     def total_actions(self) -> int:
-        return self.action_mask_builder.total_actions
+        return total_actions(self.config)
 
     def reset(
         self,
@@ -83,29 +81,14 @@ class Simulator:
         options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, object]]:
         if options is not None and options.get("only_episode_counters"):
-            if self.statistics is None or self.current_observation is None or self.current_mask is None:
+            if self.statistics is None or self.current_observation is None:
                 raise RuntimeError("cannot reset only episode counters before a full reset")
             self.statistics.reset_episode()
             self.steps_completed = 0
-            info = {"mask": self.current_mask.copy()}
-            return self.current_observation.copy(), info
+            return self._copy_observation(self.current_observation), self._build_reset_info()
 
-        self.config = replace(self.base_config, seed=seed) if seed is not None else self.base_config
-        self.qot_engine = QoTEngine(self.config, self.topology)
-        self.analysis_engine = RequestAnalysisEngine(self.config, self.topology, self.qot_engine)
-        self.action_mask_builder = ActionMask(
-            self.config,
-            self.topology,
-            self.qot_engine,
-            analysis_engine=self.analysis_engine,
-        )
-        self.observation_builder = Observation(
-            self.config,
-            self.topology,
-            self.analysis_engine,
-        )
-        self.reward_function = RewardFunction(self.config, self.topology)
-        self.step_info_builder = StepInfo(self.config)
+        next_config = replace(self.base_config, seed=seed) if seed is not None else self.base_config
+        self._apply_runtime_config(next_config)
 
         self.traffic_model = TrafficModel(
             self.config,
@@ -123,14 +106,14 @@ class Simulator:
         self._captured_trace_steps = []
 
         self._prepare_next_request()
-        if self.current_observation is None or self.current_mask is None:
+        if self.current_observation is None:
             raise RuntimeError("failed to prepare the first request")
-        return self.current_observation.copy(), {"mask": self.current_mask.copy()}
+        return self._copy_observation(self.current_observation), self._build_reset_info()
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, object]]:
         if self.state is None or self.statistics is None:
             raise RuntimeError("reset() must be called before step()")
-        if self.current_request is None or self.current_analysis is None or self.current_mask is None:
+        if self.current_request is None or self.current_analysis is None:
             raise RuntimeError("there is no active request to process")
 
         current_request = self.current_request
@@ -178,12 +161,13 @@ class Simulator:
 
         if self.capture_step_trace:
             post_step_state = self._trace_state_snapshot()
+            trace_mask = current_mask if current_mask is not None else self.get_trace_action_mask()
             self._captured_trace_steps.append(
                 {
                     "record_type": "trace_step",
                     "step_index": len(self._captured_trace_steps),
                     "request": self._trace_request_payload(current_request),
-                    "action_mask": [int(value) for value in current_mask.tolist()],
+                    "action_mask": [int(value) for value in trace_mask.tolist()],
                     "action": action_payload,
                     "candidate": candidate_payload,
                     "outcome": {
@@ -223,30 +207,32 @@ class Simulator:
             reward=reward_value,
             reward_breakdown=reward_breakdown,
             extra={
-                "mask": next_mask.copy() if next_mask is not None else np.zeros(self.total_actions, dtype=np.uint8),
+                "mask": self._info_mask(next_mask),
                 "traffic_exhausted": traffic_exhausted,
             },
         )
 
         if terminated:
-            observation = np.zeros(self.observation_builder.schema.total_size, dtype=np.float32)
+            observation = self._terminal_observation()
         else:
-            observation = self.current_observation.copy() if self.current_observation is not None else np.zeros(
-                self.observation_builder.schema.total_size,
-                dtype=np.float32,
-            )
+            observation = self._copy_observation(self.current_observation)
 
         return observation, reward_value, terminated, truncated, info
 
     def action_masks(self) -> np.ndarray | None:
-        if self.current_mask is None:
+        if not self.config.enable_action_mask or self.current_mask is None:
             return None
-        return self.current_mask.copy()
+        return self.current_mask
 
     def get_trace_action_mask(self) -> np.ndarray:
-        if self.current_mask is None:
+        if self.current_mask is not None:
+            return self.current_mask
+        if self.current_analysis is None:
             return np.zeros(self.total_actions, dtype=np.uint8)
-        return self.current_mask.copy()
+        trace_mask = self._mask_from_analysis(self.current_analysis, force=True)
+        if trace_mask is None:
+            return np.zeros(self.total_actions, dtype=np.uint8)
+        return trace_mask
 
     def export_captured_traffic_table(self) -> tuple[object, tuple[object, ...]]:
         if self.traffic_model is None:
@@ -421,12 +407,13 @@ class Simulator:
         analysis: RequestAnalysis,
         request: ServiceRequest,
     ) -> tuple[dict[str, object], dict[str, object] | None, float, dict[str, float] | None]:
-        reject_action = self.total_actions - 1
-        if action == reject_action:
+        rejected_action = reject_action(self.config)
+        decoded_action = decode_action(self.config, action)
+        if decoded_action is None:
             return (
                 {
                     "action_index": int(action),
-                    "reject_action": int(reject_action),
+                    "reject_action": int(rejected_action),
                     "decoded": {
                         "path_index": None,
                         "modulation_index": None,
@@ -439,35 +426,35 @@ class Simulator:
                 None,
             )
 
-        path_stride = self.config.modulations_to_consider * self.config.num_spectrum_resources
-        path_index = action // path_stride
-        modulation_and_slot = action % path_stride
-        modulation_offset = modulation_and_slot // self.config.num_spectrum_resources
-        initial_slot = modulation_and_slot % self.config.num_spectrum_resources
-        decoded = {
-            "path_index": int(path_index),
+        decoded_payload = {
+            "path_index": int(decoded_action.path_index),
             "modulation_index": None,
             "modulation_name": None,
-            "initial_slot": int(initial_slot),
+            "initial_slot": int(decoded_action.initial_slot),
         }
-        if path_index >= len(analysis.paths) or modulation_offset >= len(analysis.modulation_indices):
+        if (
+            decoded_action.path_index >= len(analysis.paths)
+            or decoded_action.modulation_offset >= len(analysis.modulation_indices)
+        ):
             return (
                 {
                     "action_index": int(action),
-                    "reject_action": int(reject_action),
-                    "decoded": decoded,
+                    "reject_action": int(rejected_action),
+                    "decoded": decoded_payload,
                 },
                 None,
                 0.0,
                 None,
             )
 
-        path = analysis.paths[path_index]
-        modulation_index = int(analysis.modulation_indices[modulation_offset])
+        path = analysis.paths[decoded_action.path_index]
+        modulation_index = int(analysis.modulation_indices[decoded_action.modulation_offset])
         modulation = self.config.modulations[modulation_index]
-        decoded["modulation_index"] = int(modulation_index)
-        decoded["modulation_name"] = str(modulation.name)
-        service_num_slots = int(analysis.required_slots_by_path_mod[path_index, modulation_offset])
+        decoded_payload["modulation_index"] = int(modulation_index)
+        decoded_payload["modulation_name"] = str(modulation.name)
+        service_num_slots = int(
+            analysis.required_slots_by_path_mod[decoded_action.path_index, decoded_action.modulation_offset]
+        )
         candidate_payload = None
         trace_candidate_qot = None
         if service_num_slots > 0:
@@ -475,10 +462,10 @@ class Simulator:
                 request=request,
                 path=path,
                 modulation=modulation,
-                service_slot_start=initial_slot,
+                service_slot_start=decoded_action.initial_slot,
                 service_num_slots=service_num_slots,
             )
-            occupied_slot_end_exclusive = initial_slot + service_num_slots
+            occupied_slot_end_exclusive = decoded_action.initial_slot + service_num_slots
             if occupied_slot_end_exclusive < self.config.num_spectrum_resources:
                 occupied_slot_end_exclusive += 1
             candidate_payload = {
@@ -488,9 +475,9 @@ class Simulator:
                 "path_hops": int(path.hops),
                 "path_length_km": self._trace_float(path.length_km),
                 "service_num_slots": int(service_num_slots),
-                "service_slot_start": int(initial_slot),
-                "service_slot_end_exclusive": int(initial_slot + service_num_slots),
-                "occupied_slot_start": int(initial_slot),
+                "service_slot_start": int(decoded_action.initial_slot),
+                "service_slot_end_exclusive": int(decoded_action.initial_slot + service_num_slots),
+                "occupied_slot_start": int(decoded_action.initial_slot),
                 "occupied_slot_end_exclusive": int(occupied_slot_end_exclusive),
                 "center_frequency": self._trace_float(candidate.center_frequency),
                 "bandwidth": self._trace_float(candidate.bandwidth),
@@ -507,8 +494,8 @@ class Simulator:
         return (
             {
                 "action_index": int(action),
-                "reject_action": int(reject_action),
-                "decoded": decoded,
+                "reject_action": int(rejected_action),
+                "decoded": decoded_payload,
             },
             candidate_payload,
             float(modulation.minimum_osnr + self.config.margin),
@@ -537,17 +524,18 @@ class Simulator:
                 )
         self.state.set_current_request(request)
         self.current_request = request
-        self.current_observation, self.current_analysis = self.observation_builder.build_with_analysis(
-            self.state,
-            request,
-        )
+        self.current_analysis = self.analysis_engine.build(self.state, request)
+        if self.config.enable_observation:
+            self.current_observation = self.observation_builder.build_from_analysis(self.current_analysis)
+        else:
+            self.current_observation = self._empty_observation
         self.current_mask = self._mask_from_analysis(self.current_analysis)
 
     def _apply_action(
         self,
         action: int,
         analysis: RequestAnalysis,
-        current_mask: np.ndarray,
+        current_mask: np.ndarray | None,
     ) -> StepTransition:
         if self.state is None or self.current_request is None:
             raise RuntimeError("simulator state is not initialized")
@@ -555,8 +543,8 @@ class Simulator:
             raise ValueError("action is outside the action space")
 
         request = self.current_request
-        reject_action = self.total_actions - 1
-        if action == reject_action:
+        decoded = decode_action(self.config, action)
+        if decoded is None:
             return StepTransition(
                 request=request,
                 allocation=Allocation.reject(Status.REJECTED_BY_AGENT),
@@ -564,15 +552,9 @@ class Simulator:
                 mask=current_mask,
             )
 
-        path_stride = self.config.modulations_to_consider * self.config.num_spectrum_resources
-        path_index = action // path_stride
-        modulation_and_slot = action % path_stride
-        modulation_offset = modulation_and_slot // self.config.num_spectrum_resources
-        initial_slot = modulation_and_slot % self.config.num_spectrum_resources
-
         if (
-            path_index >= len(analysis.paths)
-            or modulation_offset >= len(analysis.modulation_indices)
+            decoded.path_index >= len(analysis.paths)
+            or decoded.modulation_offset >= len(analysis.modulation_indices)
         ):
             return StepTransition(
                 request=request,
@@ -581,7 +563,7 @@ class Simulator:
                 mask=current_mask,
             )
 
-        if not analysis.resource_valid_starts[path_index, modulation_offset, initial_slot]:
+        if not analysis.resource_valid_starts[decoded.path_index, decoded.modulation_offset, decoded.initial_slot]:
             return StepTransition(
                 request=request,
                 allocation=Allocation.reject(Status.BLOCKED_RESOURCES),
@@ -591,7 +573,7 @@ class Simulator:
 
         if (
             self.config.mask_mode.value == "resource_and_qot"
-            and not analysis.qot_valid_starts[path_index, modulation_offset, initial_slot]
+            and not analysis.qot_valid_starts[decoded.path_index, decoded.modulation_offset, decoded.initial_slot]
         ):
             return StepTransition(
                 request=request,
@@ -600,19 +582,19 @@ class Simulator:
                 mask=current_mask,
             )
 
-        path = analysis.paths[path_index]
-        modulation_index = int(analysis.modulation_indices[modulation_offset])
+        path = analysis.paths[decoded.path_index]
+        modulation_index = int(analysis.modulation_indices[decoded.modulation_offset])
         modulation = self.config.modulations[modulation_index]
-        service_num_slots = int(analysis.required_slots_by_path_mod[path_index, modulation_offset])
-        occupied_slot_start = initial_slot
-        occupied_slot_end_exclusive = initial_slot + service_num_slots
+        service_num_slots = int(analysis.required_slots_by_path_mod[decoded.path_index, decoded.modulation_offset])
+        occupied_slot_start = decoded.initial_slot
+        occupied_slot_end_exclusive = decoded.initial_slot + service_num_slots
         if occupied_slot_end_exclusive < self.config.num_spectrum_resources:
             occupied_slot_end_exclusive += 1
 
         allocation = Allocation.accept(
-            path_index=path_index,
+            path_index=decoded.path_index,
             modulation_index=modulation_index,
-            service_slot_start=initial_slot,
+            service_slot_start=decoded.initial_slot,
             service_num_slots=service_num_slots,
             occupied_slot_start=occupied_slot_start,
             occupied_slot_end_exclusive=occupied_slot_end_exclusive,
@@ -622,7 +604,7 @@ class Simulator:
             request=request,
             path=path,
             modulation=modulation,
-            service_slot_start=initial_slot,
+            service_slot_start=decoded.initial_slot,
             service_num_slots=service_num_slots,
         )
         if self.config.qot_constraint == "DIST":
@@ -638,7 +620,7 @@ class Simulator:
         self.state.apply_provision(
             request=request,
             path=path,
-            service_slot_start=initial_slot,
+            service_slot_start=decoded.initial_slot,
             service_num_slots=service_num_slots,
             occupied_slot_start=occupied_slot_start,
             occupied_slot_end_exclusive=occupied_slot_end_exclusive,
@@ -674,8 +656,8 @@ class Simulator:
             osnr_requirement=modulation.minimum_osnr + self.config.margin,
             disrupted_services=disrupted_services,
             fragmentation_shannon_entropy=self._fragmentation_shannon_entropy(analysis),
-            fragmentation_route_cuts=self._fragmentation_route_cuts(analysis, path_index),
-            fragmentation_route_rss=self._fragmentation_route_rss(analysis, path_index),
+            fragmentation_route_cuts=self._fragmentation_route_cuts(analysis, decoded.path_index),
+            fragmentation_route_rss=self._fragmentation_route_rss(analysis, decoded.path_index),
             mask=current_mask,
         )
         return transition
@@ -695,23 +677,87 @@ class Simulator:
                 disrupted += 1
         return disrupted
 
-    def _mask_from_analysis(self, analysis: RequestAnalysis) -> np.ndarray:
+    def _mask_from_analysis(self, analysis: RequestAnalysis, *, force: bool = False) -> np.ndarray | None:
+        if analysis.action_mask is None and not force:
+            return None
         mask = np.zeros(self.total_actions, dtype=np.uint8)
-        mask[:-1] = analysis.action_mask
+        if analysis.action_mask is not None:
+            mask[:-1] = analysis.action_mask
+        else:
+            flags = (
+                analysis.resource_valid_starts
+                if self.config.mask_mode.value == "resource_only"
+                else analysis.qot_valid_starts
+            )
+            mask[:-1] = flags.reshape(-1).astype(np.uint8)
         mask[-1] = 1
+        mask.flags.writeable = False
         return mask
 
     def _fragmentation_shannon_entropy(self, analysis: RequestAnalysis) -> float:
-        feature_index = self.analysis_engine.global_feature_names.index("mean_link_entropy")
-        return float(analysis.global_features[feature_index])
+        return float(analysis.mean_link_entropy)
 
     def _fragmentation_route_cuts(self, analysis: RequestAnalysis, path_index: int) -> float:
-        feature_index = self.analysis_engine.path_feature_names.index("path_route_cuts_norm")
-        return float(analysis.path_features[path_index, feature_index] * max(1, self.topology.link_count * 2.0))
+        return float(analysis.path_route_cuts_norm_by_path[path_index] * max(1, self.topology.link_count * 2.0))
 
     def _fragmentation_route_rss(self, analysis: RequestAnalysis, path_index: int) -> float:
-        feature_index = self.analysis_engine.path_feature_names.index("path_route_rss")
-        return float(analysis.path_features[path_index, feature_index])
+        return float(analysis.path_route_rss_by_path[path_index])
+
+    def _build_runtime_helpers(self, config: ScenarioConfig) -> None:
+        self.qot_engine = QoTEngine(config, self.topology)
+        self.analysis_engine = RequestAnalysisEngine(config, self.topology, self.qot_engine)
+        self.action_mask_builder = ActionMask(
+            config,
+            self.topology,
+            self.qot_engine,
+            analysis_engine=self.analysis_engine,
+        )
+        self.observation_builder = Observation(
+            config,
+            self.topology,
+            self.analysis_engine,
+        )
+        self.reward_function = RewardFunction(config, self.topology)
+        self.step_info_builder = StepInfo(config)
+        self._helper_structure_key = config.runtime_structure_key()
+
+    def _apply_runtime_config(self, config: ScenarioConfig) -> None:
+        self.config = config
+        self.episode_length = config.episode_length
+        self.capture_traffic_table = config.capture_traffic_table
+        self.capture_step_trace = config.capture_step_trace
+        if self._helper_structure_key != config.runtime_structure_key():
+            self._build_runtime_helpers(config)
+            return
+        self.qot_engine.config = config
+        self.analysis_engine.config = config
+        self.analysis_engine.clear_cache()
+        self.action_mask_builder.config = config
+        self.observation_builder.config = config
+        self.reward_function.config = config
+        self.step_info_builder.config = config
+
+    def _copy_observation(self, observation: np.ndarray | None) -> np.ndarray:
+        if observation is None:
+            return self._terminal_observation()
+        if not self.config.enable_observation:
+            return self._empty_observation
+        return observation.copy()
+
+    def _terminal_observation(self) -> np.ndarray:
+        if not self.config.enable_observation:
+            return self._empty_observation
+        return np.zeros(self.observation_builder.schema.total_size, dtype=np.float32)
+
+    def _build_reset_info(self) -> dict[str, object]:
+        return {"mask": self._info_mask(self.current_mask)}
+
+    def _info_mask(self, mask: np.ndarray | None) -> np.ndarray | None:
+        if not self.config.enable_action_mask:
+            return None
+        if not self.config.include_mask_in_info:
+            return None
+        return mask
 
 
 __all__ = ["Simulator"]

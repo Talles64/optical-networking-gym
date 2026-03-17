@@ -3,6 +3,12 @@ from __future__ import annotations
 from importlib import import_module
 
 _EXPORTS = {
+    "select_first_fit_action_from_env": (".first_fit", "select_first_fit_action_from_env"),
+    "shortest_available_path_first_fit_best_modulation": (
+        ".first_fit",
+        "shortest_available_path_first_fit_best_modulation",
+    ),
+    "run_first_fit_episode": (".first_fit_example", "run_episode"),
     "QoTEngine": (".qot_engine", "QoTEngine"),
     "accumulate_link_noise": (".kernels", "accumulate_link_noise"),
     "block_is_free": (".kernels", "block_is_free"),

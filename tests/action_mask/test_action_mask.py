@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -122,3 +123,14 @@ def test_action_mask_marks_busy_ranges_invalid() -> None:
     first_path_qpsk_slice = mask[:24]
 
     assert first_path_qpsk_slice[:4].sum() == 0
+
+
+def test_action_mask_returns_none_when_output_is_disabled() -> None:
+    topology = _topology()
+    config = replace(_config(), enable_action_mask=False)
+    state = RuntimeState(config, topology)
+    builder = ActionMask(config, topology, QoTEngine(config, topology))
+
+    mask = builder.build(state, _request(12))
+
+    assert mask is None

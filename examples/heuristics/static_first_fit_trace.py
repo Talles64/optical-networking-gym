@@ -14,9 +14,9 @@ from optical_networking_gym_v2 import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOPOLOGY_DIR = PROJECT_ROOT / "examples" / "topologies"
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
+RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 
 
 def build_env(
@@ -43,7 +43,7 @@ def build_env(
         k_paths=k_paths,
         num_spectrum_resources=num_spectrum_resources,
         traffic_mode=TrafficMode.STATIC,
-        traffic_source=str(Path(traffic_table_path)),
+        static_traffic_path=traffic_table_path,
         modulations=get_modulations("BPSK, QPSK, 8QAM, 16QAM, 32QAM, 64QAM"),
         modulations_to_consider=6,
         seed=seed,
@@ -51,6 +51,7 @@ def build_env(
         measure_disruptions=False,
         margin=0.0,
         bandwidth=num_spectrum_resources * 12.5e9,
+        capture_step_trace=True,
     )
     return OpticalEnv(
         config,

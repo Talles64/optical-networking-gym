@@ -45,6 +45,7 @@ class Observation:
             modulation_count=config.modulations_to_consider,
             num_spectrum_resources=config.num_spectrum_resources,
         )
+        self.empty_observation = np.empty(0, dtype=np.float32)
 
     def _flatten_analysis(
         self,
@@ -91,11 +92,19 @@ class Observation:
 
     def build_with_analysis(self, state: RuntimeState, request: ServiceRequest) -> tuple[np.ndarray, "RequestAnalysis"]:
         analysis = self.analysis_engine.build(state, request)
-        _, _, _, _, _, flat = self._flatten_analysis(analysis)
+        if not self.config.enable_observation:
+            return self.empty_observation, analysis
+        flat = self.build_from_analysis(analysis)
         return flat, analysis
 
+    def build_from_analysis(self, analysis: "RequestAnalysis") -> np.ndarray:
+        if not self.config.enable_observation:
+            return self.empty_observation
+        _, _, _, _, _, flat = self._flatten_analysis(analysis)
+        return flat
+
     def build_snapshot(self, state: RuntimeState, request: ServiceRequest) -> ObservationSnapshot:
-        analysis = self.analysis_engine.build(state, request)
+        analysis = self.analysis_engine.build(state, request, include_inspection=True)
         (
             request_features,
             global_features,

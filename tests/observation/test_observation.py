@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -165,6 +166,25 @@ def test_observation_build_with_analysis_matches_snapshot() -> None:
     assert analysis is snapshot.analysis
     assert flat.dtype == np.float32
     assert np.array_equal(flat, snapshot.flat)
+
+
+def test_observation_build_returns_empty_array_when_output_is_disabled() -> None:
+    topology = _topology()
+    config = replace(_config(), enable_observation=False)
+    state = RuntimeState(config, topology)
+    qot_engine = QoTEngine(config, topology)
+    analysis_engine = RequestAnalysisEngine(config, topology, qot_engine)
+    observation = Observation(config, topology, analysis_engine)
+
+    flat, analysis = observation.build_with_analysis(state, _request(33))
+    snapshot = observation.build_snapshot(state, _request(33))
+
+    assert flat.shape == (0,)
+    assert flat.dtype == np.float32
+    assert analysis.inspection is None
+    assert snapshot.flat.shape == (observation.schema.total_size,)
+    assert snapshot.analysis.inspection is not None
+    assert analysis_engine.cache_misses == 2
 
 
 def test_observation_requires_modulations() -> None:
