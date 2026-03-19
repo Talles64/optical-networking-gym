@@ -46,6 +46,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
         ".heuristics.runtime_heuristics",
         "select_first_fit_action",
     ),
+    "select_load_balancing_runtime_action": (
+        ".heuristics.runtime_heuristics",
+        "select_load_balancing_action",
+    ),
     "select_random_action": (".heuristics.masked_heuristics", "select_random_action"),
     "select_random_runtime_action": (
         ".heuristics.runtime_heuristics",

@@ -7,9 +7,12 @@ from optical_networking_gym_v2.heuristics import (
     build_runtime_heuristic_context,
     select_first_fit_action,
     select_first_fit_runtime_action,
+    select_load_balancing_runtime_action,
     select_random_action,
     select_random_runtime_action,
 )
+from optical_networking_gym_v2.runtime.action_codec import encode_action
+from optical_networking_gym_v2.runtime.request_analysis import PATH_FEATURE_NAMES
 from optical_networking_gym_v2.optical.first_fit import (
     shortest_available_path_first_fit_best_modulation,
 )
@@ -159,3 +162,79 @@ def test_runtime_random_action_can_run_without_materialized_mask() -> None:
     action = select_random_runtime_action(env.heuristic_context(), rng=np.random.default_rng(13))
 
     assert 0 <= action < env.action_space.n
+
+
+def test_runtime_load_balancing_action_matches_expected_candidate_ordering() -> None:
+    set_topology_dir(TOPOLOGY_DIR)
+    env = make_env(
+        topology_name="ring_4",
+        modulation_names="QPSK,16QAM",
+        seed=17,
+        bit_rates=(40,),
+        load=10.0,
+        num_spectrum_resources=24,
+        episode_length=2,
+        modulations_to_consider=2,
+        k_paths=2,
+    )
+    _, _ = env.reset(seed=17)
+
+    context = build_runtime_heuristic_context(env)
+    action = select_load_balancing_runtime_action(context)
+
+    path_link_util_mean_index = int(PATH_FEATURE_NAMES.index("path_link_util_mean"))
+    path_link_util_max_index = int(PATH_FEATURE_NAMES.index("path_link_util_max"))
+    path_common_free_ratio_index = int(PATH_FEATURE_NAMES.index("path_common_free_ratio"))
+
+    expected_candidates: list[tuple[tuple[float, float, float, float, float, int], int]] = []
+    valid_flags = context.analysis.qot_valid_starts
+    for path_index, _path in enumerate(context.analysis.paths):
+        for modulation_offset, modulation_index in enumerate(context.analysis.modulation_indices):
+            candidate_indices = np.flatnonzero(valid_flags[path_index, modulation_offset, :])
+            for initial_slot in candidate_indices.tolist():
+                encoded = encode_action(
+                    context.config,
+                    path_index=path_index,
+                    modulation_offset=modulation_offset,
+                    initial_slot=int(initial_slot),
+                )
+                metrics = context.selected_candidate_metrics(encoded)
+                assert metrics is not None
+                path_features = context.analysis.path_features[path_index]
+                expected_candidates.append(
+                    (
+                        (
+                            float(path_features[path_link_util_max_index]),
+                            float(path_features[path_link_util_mean_index]),
+                            -float(path_features[path_common_free_ratio_index]),
+                            float(metrics.fragmentation_damage_num_blocks),
+                            float(metrics.fragmentation_damage_largest_block),
+                            int(encoded),
+                        ),
+                        int(encoded),
+                    )
+                )
+
+    assert expected_candidates
+    expected_action = min(expected_candidates, key=lambda item: item[0])[1]
+    assert action == expected_action
+
+
+def test_runtime_load_balancing_action_returns_reject_when_only_reject_is_available() -> None:
+    set_topology_dir(TOPOLOGY_DIR)
+    env = make_env(
+        topology_name="ring_4",
+        modulation_names="BPSK",
+        seed=19,
+        bit_rates=(400,),
+        load=10.0,
+        num_spectrum_resources=1,
+        episode_length=1,
+        modulations_to_consider=1,
+        k_paths=2,
+    )
+    _, _ = env.reset(seed=19)
+
+    action = select_load_balancing_runtime_action(env.heuristic_context())
+
+    assert action == env.action_space.n - 1

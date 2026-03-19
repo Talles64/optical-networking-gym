@@ -14,6 +14,14 @@ MODULATION_CATALOG: dict[str, Modulation] = {
     "64QAM": Modulation("64QAM", 125.0, 6, minimum_osnr=30.4, inband_xt=-29.0),
 }
 
+DEFAULT_SEED = 50
+DEFAULT_LOAD = 300.0
+DEFAULT_MEAN_HOLDING_TIME = 10800.0
+DEFAULT_NUM_SPECTRUM_RESOURCES = 320
+DEFAULT_K_PATHS = 5
+DEFAULT_LAUNCH_POWER_DBM = 1.0
+DEFAULT_MODULATIONS_TO_CONSIDER = 3
+
 _TOPOLOGY_DIR: Path | None = None
 
 
@@ -49,4 +57,16 @@ def get_modulations(names: str | tuple[str, ...]) -> tuple[Modulation, ...]:
     return tuple(MODULATION_CATALOG[name] for name in parsed)
 
 
-__all__ = ["MODULATION_CATALOG", "get_modulations", "resolve_topology", "set_topology_dir"]
+__all__ = [
+    "DEFAULT_K_PATHS",
+    "DEFAULT_LAUNCH_POWER_DBM",
+    "DEFAULT_LOAD",
+    "DEFAULT_MEAN_HOLDING_TIME",
+    "DEFAULT_MODULATIONS_TO_CONSIDER",
+    "DEFAULT_NUM_SPECTRUM_RESOURCES",
+    "DEFAULT_SEED",
+    "MODULATION_CATALOG",
+    "get_modulations",
+    "resolve_topology",
+    "set_topology_dir",
+]
