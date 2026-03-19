@@ -71,8 +71,12 @@ def test_step_info_builds_legacy_compatible_rates_and_debug_fields() -> None:
     assert info["accepted"] is True
     assert info["status"] == "accepted"
     assert info["episode_services_accepted"] == 1
+    assert info["services_served"] == 1
+    assert info["episode_services_served"] == 1
     assert info["service_blocking_rate"] == 0.0
     assert info["episode_service_blocking_rate"] == 0.0
+    assert info["service_served_rate"] == 1.0
+    assert info["episode_service_served_rate"] == 1.0
     assert info["bit_rate_blocking_rate"] == 0.0
     assert info["episode_bit_rate_blocking_rate"] == 0.0
     assert info["disrupted_services"] == 1.0
@@ -94,6 +98,20 @@ def test_step_info_adds_terminal_block_counters() -> None:
     config = _config()
     statistics = Statistics(config)
     statistics.record_transition(
+        StepTransition.accept(
+            request=_request(1),
+            allocation=Allocation.accept(
+                path_index=0,
+                modulation_index=0,
+                service_slot_start=2,
+                service_num_slots=2,
+                occupied_slot_start=2,
+                occupied_slot_end_exclusive=5,
+            ),
+            modulation_spectral_efficiency=2,
+        )
+    )
+    statistics.record_transition(
         StepTransition(
             request=_request(2),
             allocation=Allocation.reject(Status.BLOCKED_RESOURCES),
@@ -110,13 +128,19 @@ def test_step_info_adds_terminal_block_counters() -> None:
         allocation=Allocation.reject(Status.REJECTED_BY_AGENT),
     )
     statistics.record_transition(transition)
+    statistics.record_dropped_qot(1)
 
     info = StepInfo(config).build(statistics.snapshot(), transition, terminated=True)
 
     assert info["accepted"] is False
     assert info["status"] == "rejected_by_agent"
+    assert info["services_served"] == 0
+    assert info["episode_services_served"] == 0
+    assert info["service_served_rate"] == 0.0
+    assert info["episode_service_served_rate"] == 0.0
     assert info["blocked_due_to_resources"] == 1
     assert info["blocked_due_to_osnr"] == 1
+    assert info["disrupted_or_dropped_services"] == 1
     assert info["rejected"] == 1
 
 
@@ -175,5 +199,7 @@ def test_step_info_accepts_live_statistics_without_snapshot() -> None:
     assert info["accepted"] is True
     assert info["services_processed"] == 1
     assert info["episode_services_accepted"] == 1
+    assert info["services_served"] == 1
     assert info["service_blocking_rate"] == 0.0
+    assert info["service_served_rate"] == 1.0
     assert info["modulation_2"] == 1

@@ -17,6 +17,7 @@ class StepTransition:
     osnr: float = 0.0
     osnr_requirement: float = 0.0
     disrupted_services: int = 0
+    dropped_qot: int = 0
     fragmentation_shannon_entropy: float = 0.0
     fragmentation_route_cuts: float = 0.0
     fragmentation_route_rss: float = 0.0
@@ -33,6 +34,7 @@ class StepTransition:
         osnr: float = 0.0,
         osnr_requirement: float = 0.0,
         disrupted_services: int = 0,
+        dropped_qot: int = 0,
         fragmentation_shannon_entropy: float = 0.0,
         fragmentation_route_cuts: float = 0.0,
         fragmentation_route_rss: float = 0.0,
@@ -48,6 +50,7 @@ class StepTransition:
             osnr=osnr,
             osnr_requirement=osnr_requirement,
             disrupted_services=disrupted_services,
+            dropped_qot=dropped_qot,
             fragmentation_shannon_entropy=fragmentation_shannon_entropy,
             fragmentation_route_cuts=fragmentation_route_cuts,
             fragmentation_route_rss=fragmentation_route_rss,
@@ -81,6 +84,7 @@ class StatisticsSnapshot:
     bit_rate_requested: float
     bit_rate_provisioned: float
     disrupted_services: int
+    services_dropped_qot: int
     episode_services_processed: int
     episode_services_accepted: int
     episode_services_blocked_resources: int
@@ -89,6 +93,7 @@ class StatisticsSnapshot:
     episode_bit_rate_requested: float
     episode_bit_rate_provisioned: float
     episode_disrupted_services: int
+    episode_services_dropped_qot: int
     episode_modulation_histogram: tuple[tuple[int, int], ...]
 
     @property
@@ -104,6 +109,14 @@ class StatisticsSnapshot:
         )
 
     @property
+    def services_served(self) -> int:
+        return self.services_accepted - self.services_dropped_qot
+
+    @property
+    def episode_services_served(self) -> int:
+        return self.episode_services_accepted - self.episode_services_dropped_qot
+
+    @property
     def service_blocking_rate(self) -> float:
         if self.services_processed == 0:
             return 0.0
@@ -114,6 +127,18 @@ class StatisticsSnapshot:
         if self.episode_services_processed == 0:
             return 0.0
         return float(self.episode_services_blocked) / float(self.episode_services_processed)
+
+    @property
+    def service_served_rate(self) -> float:
+        if self.services_processed == 0:
+            return 0.0
+        return float(self.services_served) / float(self.services_processed)
+
+    @property
+    def episode_service_served_rate(self) -> float:
+        if self.episode_services_processed == 0:
+            return 0.0
+        return float(self.episode_services_served) / float(self.episode_services_processed)
 
     @property
     def bit_rate_blocking_rate(self) -> float:

@@ -35,6 +35,7 @@ class ScenarioConfig:
     reward_profile: RewardProfile = RewardProfile.BALANCED
     qot_constraint: str = "ASE+NLI"
     measure_disruptions: bool = False
+    drop_on_disruption: bool = False
     channel_width: float = 12.5
     frequency_start: float = (3e8 / 1565e-9)
     frequency_slot_bandwidth: float = 12.5e9
@@ -170,6 +171,7 @@ class ScenarioConfig:
             self.reward_profile,
             self.qot_constraint,
             self.measure_disruptions,
+            self.drop_on_disruption,
             self.channel_width,
             self.frequency_start,
             self.frequency_slot_bandwidth,

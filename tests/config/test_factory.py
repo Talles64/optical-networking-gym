@@ -45,12 +45,14 @@ def test_make_env_maps_output_flags_into_config() -> None:
         enable_action_mask=False,
         include_mask_in_info=True,
         capture_step_trace=True,
+        drop_on_disruption=True,
     )
 
     assert env.simulator.config.enable_observation is False
     assert env.simulator.config.enable_action_mask is False
     assert env.simulator.config.include_mask_in_info is False
     assert env.simulator.config.capture_step_trace is True
+    assert env.simulator.config.drop_on_disruption is True
 
 
 def test_make_env_accepts_explicit_config() -> None:

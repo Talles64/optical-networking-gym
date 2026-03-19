@@ -13,15 +13,15 @@ TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
 def run_episode(seed: int = 7) -> dict[str, float | int | str]:
     set_topology_dir(TOPOLOGY_DIR)
     env = make_env(
-        topology_name="ring_4",
-        modulation_names="QPSK,16QAM",
+        topology_name="nobel-eu",
+        modulation_names="QPSK,BPSK,8QAM,16QAM,32QAM,64QAM",
         topology_dir=TOPOLOGY_DIR,
         seed=seed,
-        bit_rates=(40,),
-        load=10.0,
-        mean_holding_time=8.0,
-        num_spectrum_resources=24,
-        episode_length=12,
+        bit_rates=(10, 40, 100, 400),
+        load=350.0,
+        mean_holding_time=10800,
+        num_spectrum_resources=320,
+        episode_length=1000,
         modulations_to_consider=2,
         k_paths=2,
     )
@@ -48,6 +48,7 @@ def run_episode(seed: int = 7) -> dict[str, float | int | str]:
         "steps": steps,
         "total_reward": total_reward,
         "last_status": last_status,
+        "Info": info,
     }
 
 

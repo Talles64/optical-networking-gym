@@ -20,6 +20,7 @@ def test_scenario_config_defaults_follow_architecture() -> None:
     assert config.traffic_mode is TrafficMode.DYNAMIC
     assert config.qot_constraint == "ASE+NLI"
     assert config.measure_disruptions is False
+    assert config.drop_on_disruption is False
     assert config.channel_width == pytest.approx(12.5)
     assert config.frequency_slot_bandwidth == pytest.approx(12.5e9)
     assert config.launch_power_dbm == pytest.approx(0.0)

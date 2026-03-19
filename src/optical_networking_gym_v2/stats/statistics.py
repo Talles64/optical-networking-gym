@@ -18,6 +18,7 @@ class Statistics:
         self._bit_rate_requested = 0.0
         self._bit_rate_provisioned = 0.0
         self._disrupted_services = 0
+        self._services_dropped_qot = 0
         self._episode_modulation_histogram: dict[int, int] = {}
         self.reset_episode()
 
@@ -30,6 +31,7 @@ class Statistics:
         self._episode_bit_rate_requested = 0.0
         self._episode_bit_rate_provisioned = 0.0
         self._episode_disrupted_services = 0
+        self._episode_services_dropped_qot = 0
         self._episode_modulation_histogram = {
             spectral_efficiency: 0 for spectral_efficiency in self._configured_spectral_efficiencies
         }
@@ -68,6 +70,21 @@ class Statistics:
         self._disrupted_services += transition.disrupted_services
         self._episode_disrupted_services += transition.disrupted_services
 
+    def record_dropped_qot(self, count: int) -> None:
+        if count < 0:
+            raise ValueError("count must be non-negative")
+        self._services_dropped_qot += count
+        self._episode_services_dropped_qot += count
+
+    def record_post_admission_effects(self, *, disrupted_services: int = 0, dropped_qot: int = 0) -> None:
+        if disrupted_services < 0:
+            raise ValueError("disrupted_services must be non-negative")
+        if dropped_qot < 0:
+            raise ValueError("dropped_qot must be non-negative")
+        self._disrupted_services += disrupted_services
+        self._episode_disrupted_services += disrupted_services
+        self.record_dropped_qot(dropped_qot)
+
     @property
     def services_processed(self) -> int:
         return self._services_processed
@@ -101,6 +118,10 @@ class Statistics:
         return self._disrupted_services
 
     @property
+    def services_dropped_qot(self) -> int:
+        return self._services_dropped_qot
+
+    @property
     def episode_services_processed(self) -> int:
         return self._episode_services_processed
 
@@ -131,6 +152,10 @@ class Statistics:
     @property
     def episode_disrupted_services(self) -> int:
         return self._episode_disrupted_services
+
+    @property
+    def episode_services_dropped_qot(self) -> int:
+        return self._episode_services_dropped_qot
 
     @property
     def episode_modulation_histogram(self) -> tuple[tuple[int, int], ...]:
@@ -166,6 +191,14 @@ class Statistics:
         )
 
     @property
+    def services_served(self) -> int:
+        return self.services_accepted - self.services_dropped_qot
+
+    @property
+    def episode_services_served(self) -> int:
+        return self.episode_services_accepted - self.episode_services_dropped_qot
+
+    @property
     def service_blocking_rate(self) -> float:
         if self.services_processed == 0:
             return 0.0
@@ -176,6 +209,18 @@ class Statistics:
         if self.episode_services_processed == 0:
             return 0.0
         return float(self.episode_services_blocked) / float(self.episode_services_processed)
+
+    @property
+    def service_served_rate(self) -> float:
+        if self.services_processed == 0:
+            return 0.0
+        return float(self.services_served) / float(self.services_processed)
+
+    @property
+    def episode_service_served_rate(self) -> float:
+        if self.episode_services_processed == 0:
+            return 0.0
+        return float(self.episode_services_served) / float(self.episode_services_processed)
 
     @property
     def bit_rate_blocking_rate(self) -> float:
@@ -213,6 +258,7 @@ class Statistics:
             bit_rate_requested=self._bit_rate_requested,
             bit_rate_provisioned=self._bit_rate_provisioned,
             disrupted_services=self._disrupted_services,
+            services_dropped_qot=self._services_dropped_qot,
             episode_services_processed=self._episode_services_processed,
             episode_services_accepted=self._episode_services_accepted,
             episode_services_blocked_resources=self._episode_services_blocked_resources,
@@ -221,6 +267,7 @@ class Statistics:
             episode_bit_rate_requested=self._episode_bit_rate_requested,
             episode_bit_rate_provisioned=self._episode_bit_rate_provisioned,
             episode_disrupted_services=self._episode_disrupted_services,
+            episode_services_dropped_qot=self._episode_services_dropped_qot,
             episode_modulation_histogram=self.episode_modulation_histogram,
         )
 
@@ -245,6 +292,10 @@ class Statistics:
             raise AssertionError("episode_bit_rate_provisioned cannot exceed episode_bit_rate_requested")
         if self._disrupted_services < 0 or self._episode_disrupted_services < 0:
             raise AssertionError("disrupted services cannot be negative")
+        if self._services_dropped_qot < 0 or self._episode_services_dropped_qot < 0:
+            raise AssertionError("dropped qot services cannot be negative")
+        if self.services_served < 0 or self.episode_services_served < 0:
+            raise AssertionError("served services cannot be negative")
         for spectral_efficiency, count in self._episode_modulation_histogram.items():
             if spectral_efficiency <= 0:
                 raise AssertionError("modulation histogram keys must be positive")

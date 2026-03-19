@@ -184,6 +184,7 @@ def _build_legacy_env(
         seed=seed,
         reset=True,
         gen_observation=False,
+        measure_disruptions=False,
         k_paths=k_paths,
     )
 

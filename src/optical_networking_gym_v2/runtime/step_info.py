@@ -31,8 +31,12 @@ class StepInfo:
             "services_accepted": statistics.services_accepted,
             "episode_services_processed": statistics.episode_services_processed,
             "episode_services_accepted": statistics.episode_services_accepted,
+            "services_served": statistics.services_served,
+            "episode_services_served": statistics.episode_services_served,
             "service_blocking_rate": statistics.service_blocking_rate,
             "episode_service_blocking_rate": statistics.episode_service_blocking_rate,
+            "service_served_rate": statistics.service_served_rate,
+            "episode_service_served_rate": statistics.episode_service_served_rate,
             "bit_rate_blocking_rate": statistics.bit_rate_blocking_rate,
             "episode_bit_rate_blocking_rate": statistics.episode_bit_rate_blocking_rate,
             "disrupted_services": statistics.disrupted_services_rate,
@@ -63,6 +67,7 @@ class StepInfo:
         if terminated:
             info["blocked_due_to_resources"] = statistics.episode_services_blocked_resources
             info["blocked_due_to_osnr"] = statistics.episode_services_blocked_qot
+            info["disrupted_or_dropped_services"] = statistics.episode_services_dropped_qot
             info["rejected"] = statistics.episode_services_rejected_by_agent
 
         if extra:

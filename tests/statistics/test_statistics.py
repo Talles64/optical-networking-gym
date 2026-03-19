@@ -84,11 +84,48 @@ def test_statistics_accumulates_counters_rates_and_histogram() -> None:
     assert snapshot.services_accepted == 1
     assert snapshot.services_blocked_resources == 1
     assert snapshot.services_blocked_qot == 1
+    assert snapshot.services_dropped_qot == 0
     assert snapshot.services_rejected_by_agent == 1
+    assert snapshot.services_served == 1
     assert snapshot.service_blocking_rate == pytest.approx(0.75)
+    assert snapshot.service_served_rate == pytest.approx(0.25)
     assert snapshot.bit_rate_blocking_rate == pytest.approx((420 - 40) / 420)
     assert snapshot.disrupted_services_rate == pytest.approx(1.0)
     assert snapshot.episode_modulation_histogram == ((2, 1), (4, 0))
+
+
+def test_statistics_tracks_dropped_qot_separately_from_admission_blocks() -> None:
+    statistics = Statistics(_config())
+    statistics.record_transition(
+        StepTransition.accept(
+            request=_request(30, bit_rate=40),
+            allocation=Allocation.accept(
+                path_index=0,
+                modulation_index=0,
+                service_slot_start=2,
+                service_num_slots=2,
+                occupied_slot_start=2,
+                occupied_slot_end_exclusive=5,
+            ),
+            modulation_spectral_efficiency=2,
+            disrupted_services=1,
+            osnr=15.0,
+            osnr_requirement=6.72,
+        )
+    )
+    statistics.record_dropped_qot(1)
+
+    snapshot = statistics.snapshot()
+
+    assert snapshot.services_blocked_qot == 0
+    assert snapshot.services_dropped_qot == 1
+    assert snapshot.services_served == 0
+    assert snapshot.episode_services_blocked_qot == 0
+    assert snapshot.episode_services_dropped_qot == 1
+    assert snapshot.episode_services_served == 0
+    assert snapshot.disrupted_services == 1
+    assert snapshot.service_served_rate == pytest.approx(0.0)
+    assert snapshot.episode_service_served_rate == pytest.approx(0.0)
 
 
 def test_statistics_reset_episode_preserves_totals_and_clears_episode_counters() -> None:
@@ -115,6 +152,8 @@ def test_statistics_reset_episode_preserves_totals_and_clears_episode_counters()
     assert snapshot.services_accepted == 1
     assert snapshot.episode_services_processed == 0
     assert snapshot.episode_services_accepted == 0
+    assert snapshot.services_served == 1
+    assert snapshot.episode_services_served == 0
     assert snapshot.episode_bit_rate_requested == 0.0
     assert snapshot.episode_modulation_histogram == ((2, 0), (4, 0))
 
@@ -130,4 +169,26 @@ def test_statistics_validate_invariants_rejects_inconsistent_internal_state() ->
     statistics._services_processed = 0
 
     with pytest.raises(AssertionError, match="processed"):
+        statistics.validate_invariants()
+
+
+def test_statistics_validate_invariants_rejects_negative_served_count() -> None:
+    statistics = Statistics(_config())
+    statistics.record_transition(
+        StepTransition.accept(
+            request=_request(40),
+            allocation=Allocation.accept(
+                path_index=0,
+                modulation_index=0,
+                service_slot_start=1,
+                service_num_slots=2,
+                occupied_slot_start=1,
+                occupied_slot_end_exclusive=4,
+            ),
+            modulation_spectral_efficiency=2,
+        )
+    )
+    statistics.record_dropped_qot(2)
+
+    with pytest.raises(AssertionError, match="served"):
         statistics.validate_invariants()

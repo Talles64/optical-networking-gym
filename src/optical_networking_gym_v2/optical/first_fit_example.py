@@ -67,9 +67,11 @@ def run_episode(
         "steps": steps,
         "total_reward": total_reward,
         "episode_service_blocking_rate": float(last_info.get("episode_service_blocking_rate", 0.0)),
+        "episode_service_served_rate": float(last_info.get("episode_service_served_rate", 0.0)),
         "episode_bit_rate_blocking_rate": float(last_info.get("episode_bit_rate_blocking_rate", 0.0)),
         "episode_services_processed": int(last_info.get("episode_services_processed", steps)),
         "episode_services_accepted": int(last_info.get("episode_services_accepted", 0)),
+        "episode_services_served": int(last_info.get("episode_services_served", 0)),
         "status_counts": dict(statuses),
         "blocked_due_to_resources_decisions": int(statuses.get("blocked_resources", 0)),
         "blocked_due_to_qot_decisions": int(statuses.get("blocked_qot", 0)),
@@ -90,6 +92,7 @@ def main() -> None:
     output_path = save_results(summary)
     print(f"Steps: {summary['steps']}  |  Total reward: {summary['total_reward']:.2f}")
     print(f"Blocking rate: {summary['episode_service_blocking_rate']:.4f}")
+    print(f"Served rate: {summary['episode_service_served_rate']:.4f}")
     print(f"Results saved to: {output_path}")
 
 

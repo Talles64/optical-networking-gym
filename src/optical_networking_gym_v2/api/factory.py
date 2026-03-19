@@ -41,6 +41,7 @@ def make_env(
     margin: float = 0.0,
     bandwidth: float | None = None,
     measure_disruptions: bool = False,
+    drop_on_disruption: bool = False,
     enable_observation: bool = True,
     enable_action_mask: bool = True,
     include_mask_in_info: bool = True,
@@ -71,7 +72,7 @@ def make_env(
     Physical layer:
         `num_spectrum_resources`, `channel_width`, `frequency_start`,
         `frequency_slot_bandwidth`, `launch_power_dbm`, `margin`, `bandwidth`,
-        `measure_disruptions`.
+        `measure_disruptions`, `drop_on_disruption`.
 
     Routing / modulation:
         `modulation_names`, `modulations_to_consider`, `mask_mode`,
@@ -118,6 +119,7 @@ def make_env(
             reward_profile=reward_profile,
             qot_constraint=qot_constraint,
             measure_disruptions=measure_disruptions,
+            drop_on_disruption=drop_on_disruption,
             channel_width=channel_width,
             frequency_start=frequency_start,
             frequency_slot_bandwidth=frequency_slot_bandwidth,

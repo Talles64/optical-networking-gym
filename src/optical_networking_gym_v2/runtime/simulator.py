@@ -133,6 +133,8 @@ class Simulator:
         transition = self._apply_action(action, analysis, current_mask)
         post_action_state = self._trace_state_snapshot() if self.capture_step_trace else None
         self.statistics.record_transition(transition)
+        if transition.dropped_qot:
+            self.statistics.record_dropped_qot(transition.dropped_qot)
 
         reward_value, reward_breakdown = self.reward_function.evaluate_transition(
             transition,
@@ -520,10 +522,12 @@ class Simulator:
                     )
                 )
             if impacted_ids:
-                updates = self.qot_engine.refresh_services(self.state, tuple(sorted(impacted_ids)))
-                self.state.apply_qot_updates(
-                    {update.service_id: update.to_mapping() for update in updates}
-                )
+                disrupted_services, dropped_qot = self._refresh_impacted_services(tuple(sorted(impacted_ids)))
+                if self.statistics is not None and (disrupted_services or dropped_qot):
+                    self.statistics.record_post_admission_effects(
+                        disrupted_services=disrupted_services,
+                        dropped_qot=dropped_qot,
+                    )
         self.state.set_current_request(request)
         self.current_request = request
         self.current_analysis = self.analysis_engine.build(self.state, request)
@@ -636,6 +640,7 @@ class Simulator:
         )
 
         disrupted_services = 0
+        dropped_qot = 0
         if self.config.measure_disruptions:
             impacted_ids = self.qot_engine.impacted_service_ids(
                 self.state,
@@ -643,11 +648,7 @@ class Simulator:
                 exclude_service_id=request.service_id,
             )
             if impacted_ids:
-                updates = self.qot_engine.refresh_services(self.state, impacted_ids)
-                self.state.apply_qot_updates(
-                    {update.service_id: update.to_mapping() for update in updates}
-                )
-                disrupted_services = self._count_new_disruptions(updates)
+                disrupted_services, dropped_qot = self._refresh_impacted_services(tuple(sorted(impacted_ids)))
 
         transition = StepTransition.accept(
             request=request,
@@ -657,6 +658,7 @@ class Simulator:
             osnr=osnr,
             osnr_requirement=modulation.minimum_osnr + self.config.margin,
             disrupted_services=disrupted_services,
+            dropped_qot=dropped_qot,
             fragmentation_shannon_entropy=self._fragmentation_shannon_entropy(analysis),
             fragmentation_route_cuts=self._fragmentation_route_cuts(analysis, decoded.path_index),
             fragmentation_route_rss=self._fragmentation_route_rss(analysis, decoded.path_index),
@@ -664,20 +666,67 @@ class Simulator:
         )
         return transition
 
-    def _count_new_disruptions(self, updates: tuple[object, ...]) -> int:
+    def _refresh_impacted_services(self, impacted_ids: tuple[int, ...]) -> tuple[int, int]:
         if self.state is None:
-            return 0
-        disrupted = 0
-        for update in updates:
-            service = self.state.active_services_by_id[update.service_id]
-            modulation = service.modulation
-            if modulation is None:
-                continue
-            threshold = modulation.minimum_osnr + self.config.margin
-            if update.osnr < threshold and update.service_id not in self._disrupted_service_ids:
+            return 0, 0
+
+        pending_ids = tuple(
+            service_id for service_id in impacted_ids if service_id in self.state.active_services_by_id
+        )
+        total_disrupted = 0
+        total_dropped = 0
+
+        while pending_ids:
+            updates = self.qot_engine.refresh_services(self.state, pending_ids)
+            if updates:
+                self.state.apply_qot_updates(
+                    {
+                        update.service_id: update.to_mapping()
+                        for update in updates
+                        if update.service_id in self.state.active_services_by_id
+                    }
+                )
+
+            newly_disrupted_ids: list[int] = []
+            for update in updates:
+                if update.service_id not in self.state.active_services_by_id:
+                    continue
+                service = self.state.active_services_by_id[update.service_id]
+                modulation = service.modulation
+                if modulation is None:
+                    continue
+                threshold = modulation.minimum_osnr + self.config.margin
+                if update.osnr >= threshold or update.service_id in self._disrupted_service_ids:
+                    continue
                 self._disrupted_service_ids.add(update.service_id)
-                disrupted += 1
-        return disrupted
+                self.state.apply_disruption(update.service_id, terminal=self.config.drop_on_disruption)
+                total_disrupted += 1
+                if self.config.drop_on_disruption:
+                    total_dropped += 1
+                    newly_disrupted_ids.append(update.service_id)
+
+            if not self.config.drop_on_disruption or not newly_disrupted_ids:
+                break
+
+            next_pending_ids: set[int] = set()
+            for disrupted_service_id in newly_disrupted_ids:
+                disrupted_service = self.state.disrupted_services_by_id[disrupted_service_id]
+                next_pending_ids.update(
+                    self.qot_engine.impacted_service_ids(
+                        self.state,
+                        disrupted_service.path,
+                        exclude_service_id=disrupted_service_id,
+                    )
+                )
+            pending_ids = tuple(
+                sorted(
+                    service_id
+                    for service_id in next_pending_ids
+                    if service_id in self.state.active_services_by_id
+                )
+            )
+
+        return total_disrupted, total_dropped
 
     def _mask_from_analysis(self, analysis: RequestAnalysis, *, force: bool = False) -> np.ndarray | None:
         if analysis.action_mask is None and not force:

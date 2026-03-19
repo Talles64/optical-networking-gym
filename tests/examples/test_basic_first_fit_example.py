@@ -28,3 +28,4 @@ def test_basic_first_fit_example_writes_results_file(tmp_path: Path) -> None:
     assert payload["topology_name"] == "ring_4"
     assert payload["steps"] == 12
     assert "episode_service_blocking_rate" in payload
+    assert "episode_service_served_rate" in payload

@@ -232,6 +232,37 @@ def test_apply_qot_updates_changes_only_targeted_service() -> None:
     assert service.nli == pytest.approx(18.8)
 
 
+def test_apply_disruption_moves_service_to_limbo_and_clears_runtime_state() -> None:
+    topology = _topology()
+    state = RuntimeState(_config(), topology)
+    request = _request(5)
+    path = topology.get_paths("1", "3")[0]
+
+    state.apply_provision(
+        request=request,
+        path=path,
+        service_slot_start=6,
+        service_num_slots=2,
+        occupied_slot_start=6,
+        occupied_slot_end_exclusive=9,
+    )
+    state.apply_qot_updates({5: {"osnr": 17.3, "ase": 20.7, "nli": 18.8}})
+
+    disrupted = state.apply_disruption(5, terminal=True)
+
+    assert disrupted.service_id == 5
+    assert disrupted.is_disrupted is True
+    assert disrupted.disruption_count == 1
+    assert 5 not in state.active_services_by_id
+    assert state.disrupted_services_by_id[5] is disrupted
+    assert 5 not in state.service_qot_by_id
+    assert state.release_queue_snapshot() == ()
+    for link_id in path.link_ids:
+        assert 5 not in state.link_active_service_ids[link_id]
+        assert (state.slot_allocation[link_id, 6:9] == -1).all()
+    state.validate_invariants()
+
+
 def test_provision_rejects_slot_collision() -> None:
     topology = _topology()
     state = RuntimeState(_config(), topology)

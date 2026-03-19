@@ -29,6 +29,8 @@ class ActiveService:
     osnr: float = 0.0
     ase: float = 0.0
     nli: float = 0.0
+    is_disrupted: bool = False
+    disruption_count: int = 0
 
     @property
     def service_id(self) -> int:
@@ -59,6 +61,7 @@ class RuntimeState:
             dtype=np.int32,
         )
         self.active_services_by_id: dict[int, ActiveService] = {}
+        self.disrupted_services_by_id: dict[int, ActiveService] = {}
         self.release_queue: list[tuple[float, int]] = []
         self.release_times_by_service_id: dict[int, float] = {}
         self.link_active_service_ids: tuple[set[int], ...] = tuple(
@@ -184,6 +187,18 @@ class RuntimeState:
         if updates:
             self.global_state_version += 1
 
+    def apply_disruption(self, service_id: int, *, terminal: bool = False) -> ActiveService:
+        if terminal:
+            service = self.apply_release(service_id)
+        else:
+            service = self.active_services_by_id[service_id]
+        service.is_disrupted = True
+        service.disruption_count += 1
+        if terminal:
+            self.disrupted_services_by_id[service_id] = service
+        self.global_state_version += 1
+        return service
+
     def advance_time_and_release_due_services(self, until_time: float) -> tuple[ActiveService, ...]:
         if until_time < self.current_time:
             raise ValueError("until_time cannot move backwards")
@@ -226,6 +241,9 @@ class RuntimeState:
                     raise AssertionError(f"service {service_id} slot allocation is inconsistent")
 
         active_service_ids = set(self.active_services_by_id)
+        disrupted_service_ids = set(self.disrupted_services_by_id)
+        if active_service_ids & disrupted_service_ids:
+            raise AssertionError("active and disrupted service registries must be disjoint")
         for link_id, service_ids in enumerate(self.link_active_service_ids):
             for service_id in service_ids:
                 if service_id not in active_service_ids:
@@ -241,3 +259,8 @@ class RuntimeState:
                 raise AssertionError(
                     f"release schedule for service {service_id} is inconsistent with the request"
                 )
+        for service_id in disrupted_service_ids:
+            if service_id in self.release_times_by_service_id:
+                raise AssertionError("disrupted services cannot remain in the release schedule")
+            if service_id in self.service_qot_by_id:
+                raise AssertionError("disrupted services cannot remain in active qos snapshots")
