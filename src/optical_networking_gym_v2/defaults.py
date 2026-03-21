@@ -22,6 +22,8 @@ DEFAULT_K_PATHS = 5
 DEFAULT_LAUNCH_POWER_DBM = 1.0
 DEFAULT_MODULATIONS_TO_CONSIDER = 3
 
+BUILTIN_TOPOLOGY_DIR: Path = Path(__file__).parent / "topologies"
+
 _TOPOLOGY_DIR: Path | None = None
 
 
@@ -31,16 +33,13 @@ def set_topology_dir(path: str | Path) -> None:
 
 
 def resolve_topology(name: str) -> Path:
-    if _TOPOLOGY_DIR is None:
-        raise RuntimeError(
-            "Topology directory not set. Call set_topology_dir() or pass topology_dir to make_env()."
-        )
+    search_dir = _TOPOLOGY_DIR if _TOPOLOGY_DIR is not None else BUILTIN_TOPOLOGY_DIR
     for suffix in (".xml", ".txt"):
-        candidate = _TOPOLOGY_DIR / f"{name}{suffix}"
+        candidate = search_dir / f"{name}{suffix}"
         if candidate.exists():
             return candidate
     raise FileNotFoundError(
-        f"Topology {name!r} not found in {_TOPOLOGY_DIR}. Tried: {name}.xml, {name}.txt"
+        f"Topology {name!r} not found in {search_dir}. Tried: {name}.xml, {name}.txt"
     )
 
 

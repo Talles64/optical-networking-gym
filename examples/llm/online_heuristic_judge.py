@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import sys
+import time
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
@@ -31,6 +34,7 @@ from optical_networking_gym_v2.judge import (
     JudgePromptRecord,
     JudgeVerdict,
     OllamaHeuristicJudge,
+    OllamaJudgeConfig,
     build_global_regimes,
     build_judge_audit_record,
     build_judge_candidate,
@@ -47,14 +51,24 @@ from optical_networking_gym_v2.utils import sweep_reporting as report_utils
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_DIR = Path(__file__).resolve().parent
 
+# ── LLM Judge inline config (edit here to switch models) ─────────────────────
+_OLLAMA_BASE_URL        = "http://localhost:11434"
+_OLLAMA_MODEL           = "qwen3.5:4b"
+_OLLAMA_TEMPERATURE     = 0.0
+_OLLAMA_TIMEOUT_S       = 60.0
+_OLLAMA_MAX_RETRIES     = 3
+_OLLAMA_SKIP_EXPLANATION = True
+_OLLAMA_THINK           = False   # False | "low" | "medium" | "high" | True  (support varies by model)
+# ─────────────────────────────────────────────────────────────────────────────
+
 HEURISTIC_ORDER = ("first_fit", "load_balancing", "random")
 
 
 @dataclass(frozen=True, slots=True)
 class LLMJudgeExperiment:
     topology_id: str = "nobel-eu"
-    episode_count: int = 1
-    episode_length: int = 10
+    episode_count: int = 5
+    episode_length: int = 1000
     seed: int = DEFAULT_SEED
     load: float = DEFAULT_LOAD
     mean_holding_time: float = DEFAULT_MEAN_HOLDING_TIME
@@ -62,7 +76,7 @@ class LLMJudgeExperiment:
     k_paths: int = DEFAULT_K_PATHS
     launch_power_dbm: float = DEFAULT_LAUNCH_POWER_DBM
     modulations_to_consider: int = DEFAULT_MODULATIONS_TO_CONSIDER
-    measure_disruptions: bool = True
+    measure_disruptions: bool = False
     drop_on_disruption: bool = False
     prompt_version: str = "v2_blocking_risk_compact_payload"
     env_path: Path = REPO_ROOT / ".env"
@@ -96,7 +110,6 @@ class LLMJudgeOutputs:
 
 def build_base_scenario(experiment: LLMJudgeExperiment) -> ScenarioConfig:
     return scenario_utils.build_nobel_eu_graph_load_scenario(
-        REPO_ROOT,
         topology_id=experiment.topology_id,
         episode_length=experiment.episode_length,
         seed=experiment.seed,
@@ -213,7 +226,11 @@ def _resolve_prompt_and_model_io(
         if trace is not None:
             prompt_record = trace.prompt
             raw_model_response = None if trace.raw_model_response is None else dict(trace.raw_model_response)
-            parsed_response = None if trace.parsed_response is None else dict(trace.parsed_response)
+            parsed_response = (
+                None if trace.parsed_response is None
+                else dict(trace.parsed_response) if isinstance(trace.parsed_response, Mapping)
+                else {"_raw": trace.parsed_response}
+            )
     return prompt_record, raw_model_response, parsed_response
 
 
@@ -272,6 +289,33 @@ def _build_step_row(
         "episode_bit_rate_blocking_rate": float(post_info.get("episode_bit_rate_blocking_rate", 0.0)),
         "episode_disrupted_services_rate": float(post_info.get("episode_disrupted_services", 0.0)),
     }
+
+
+def _print_progress(
+    *,
+    step: int,
+    total_steps: int,
+    episode: int,
+    total_episodes: int,
+    blocking_rate: float,
+    load: float,
+    elapsed_s: float,
+) -> None:
+    pct = step / total_steps if total_steps > 0 else 0.0
+    bar_width = 24
+    filled = int(bar_width * pct)
+    bar = "#" * filled + "-" * (bar_width - filled)
+    s_per_step = elapsed_s / step if step > 0 else 0.0
+    steps_per_s = step / elapsed_s if elapsed_s > 0 else 0.0
+    line = (
+        f"\rllm-judge [{bar}] {step}/{total_steps} {pct * 100:.1f}%"
+        f" | {s_per_step:.1f}s/step ; {steps_per_s:.2f} steps/s"
+        f" | ep {episode}/{total_episodes}"
+        f" | block {blocking_rate:.3f}"
+        f" | load {load:.0f}"
+    )
+    sys.stdout.write(line)
+    sys.stdout.flush()
 
 
 def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
@@ -336,7 +380,16 @@ def run_experiment(
 
     date_label = _date_prefix(now)
     base_scenario = build_base_scenario(experiment)
-    judge_client = judge if judge is not None else OllamaHeuristicJudge.from_env(env_path=experiment.env_path)
+    # judge_client = judge if judge is not None else OllamaHeuristicJudge.from_env(env_path=experiment.env_path)
+    judge_client = judge if judge is not None else OllamaHeuristicJudge(OllamaJudgeConfig(
+        base_url=_OLLAMA_BASE_URL,
+        model=_OLLAMA_MODEL,
+        temperature=_OLLAMA_TEMPERATURE,
+        timeout_s=_OLLAMA_TIMEOUT_S,
+        max_retries=_OLLAMA_MAX_RETRIES,
+        skip_explanation=_OLLAMA_SKIP_EXPLANATION,
+        think=_OLLAMA_THINK,
+    ))
 
     step_rows: list[dict[str, report_utils.Scalar]] = []
     episode_summaries: list[dict[str, report_utils.Scalar]] = []
@@ -355,6 +408,7 @@ def run_experiment(
         episode_step_count = 0
         episode_llm_calls = 0
         episode_fallback_count = 0
+        episode_start_time = time.monotonic()
         while True:
             context = env.heuristic_context()
             candidate_actions = _select_candidate_actions(context=context, rng=rng)
@@ -441,8 +495,20 @@ def run_experiment(
             _append_jsonl(outputs.calls_jsonl, audit_record.to_mapping())
 
             episode_step_count += 1
+            _print_progress(
+                step=episode_step_count,
+                total_steps=experiment.episode_length,
+                episode=episode_index + 1,
+                total_episodes=experiment.episode_count,
+                blocking_rate=float(current_info.get("episode_service_blocking_rate", 0.0)),
+                load=experiment.load,
+                elapsed_s=time.monotonic() - episode_start_time,
+            )
             if terminated or truncated:
                 break
+
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
         episode_rows = [row for row in step_rows if int(row["episode_index"]) == episode_index]
         episode_summaries.append(
@@ -480,7 +546,24 @@ def run_experiment(
 
 
 def main() -> None:
-    outputs = run_experiment(experiment=LLMJudgeExperiment())
+    import argparse
+    import os as _os
+
+    parser = argparse.ArgumentParser(description="Run LLM heuristic judge experiment")
+    parser.add_argument("--episode-length", type=int, default=1000)
+    parser.add_argument("--episode-count", type=int, default=5)
+    parser.add_argument("--skip-explanation", action="store_true", help="omit reason/evidence from LLM output")
+    args = parser.parse_args()
+
+    if args.skip_explanation:
+        _os.environ["LLM_JUDGE_SKIP_EXPLANATION"] = "true"
+
+    outputs = run_experiment(
+        experiment=LLMJudgeExperiment(
+            episode_length=args.episode_length,
+            episode_count=args.episode_count,
+        ),
+    )
     print(asdict(outputs))
 
 

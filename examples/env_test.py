@@ -16,13 +16,14 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
-TOPOLOGY_DIR = PROJECT_ROOT.parent / "examples" / "topologies"
 DEFAULT_OUTPUT = PROJECT_ROOT / "examples" / "results" / "env_test_report.html"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from optical_networking_gym_v2 import make_env, select_first_fit_action  # noqa: E402
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, select_first_fit_action  # noqa: E402
+
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 from optical_networking_gym_v2.envs.optical_env import OpticalEnv  # noqa: E402
 
 

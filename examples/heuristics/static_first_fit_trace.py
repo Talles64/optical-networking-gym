@@ -15,8 +15,8 @@ from optical_networking_gym_v2 import (
 from optical_networking_gym_v2.instrumentation.traces import write_step_trace_jsonl
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 
 

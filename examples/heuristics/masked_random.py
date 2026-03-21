@@ -4,12 +4,11 @@ from pathlib import Path
 
 import numpy as np
 
-from optical_networking_gym_v2 import make_env, set_topology_dir
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
 from optical_networking_gym_v2.heuristics.masked_heuristics import select_random_action
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 
 
 def run_episode(seed: int = 7) -> dict[str, float | int | str]:

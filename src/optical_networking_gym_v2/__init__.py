@@ -16,6 +16,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ObservationSnapshot": (".contracts.observation", "ObservationSnapshot"),
     "OpticalEnv": (".envs.optical_env", "OpticalEnv"),
     "PathRecord": (".network.topology", "PathRecord"),
+    "BUILTIN_TOPOLOGY_DIR": (".defaults", "BUILTIN_TOPOLOGY_DIR"),
     "MODULATION_CATALOG": (".defaults", "MODULATION_CATALOG"),
     "QoTEngine": (".optical.qot_engine", "QoTEngine"),
     "QoTRequest": (".contracts.qot", "QoTRequest"),

@@ -194,10 +194,46 @@ class JudgeDecisionPayload:
         }
 
     def to_prompt_json(self) -> str:
-        return json.dumps(self.to_prompt_mapping(), indent=2, sort_keys=True)
+        mapping = self.to_prompt_mapping()
+        _filter_prompt_payload(mapping)
+        return json.dumps(mapping, indent=2, sort_keys=True)
 
 
 JudgePayload = JudgeDecisionPayload
+
+
+def _round_floats(obj: object, ndigits: int = 4) -> object:
+    if isinstance(obj, float):
+        return round(obj, ndigits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(item, ndigits) for item in obj]
+    return obj
+
+
+_PROMPT_EXCLUDED_ROUTE_FIELDS = {"endpoint_pair"}
+_PROMPT_EXCLUDED_METRIC_FIELDS = {"path_link_util_mean"}
+
+
+def _filter_prompt_payload(mapping: dict[str, object]) -> None:
+    candidates = mapping.get("candidates")
+    if not isinstance(candidates, list):
+        return
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        route = candidate.get("route_summary")
+        if isinstance(route, dict):
+            for field in _PROMPT_EXCLUDED_ROUTE_FIELDS:
+                route.pop(field, None)
+        metrics = candidate.get("decision_metrics")
+        if isinstance(metrics, dict):
+            for field in _PROMPT_EXCLUDED_METRIC_FIELDS:
+                metrics.pop(field, None)
+    for key in ("candidates", "operational_state", "topology_context"):
+        if key in mapping:
+            mapping[key] = _round_floats(mapping[key])
 
 
 @dataclass(frozen=True, slots=True)

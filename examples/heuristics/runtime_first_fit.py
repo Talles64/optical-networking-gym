@@ -1,31 +1,34 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from optical_networking_gym_v2 import make_env, set_topology_dir
+from optical_networking_gym_v2 import make_env
+from optical_networking_gym_v2.defaults import (
+    DEFAULT_K_PATHS,
+    DEFAULT_LAUNCH_POWER_DBM,
+    DEFAULT_LOAD,
+    DEFAULT_MEAN_HOLDING_TIME,
+    DEFAULT_MODULATIONS_TO_CONSIDER,
+    DEFAULT_NUM_SPECTRUM_RESOURCES,
+    DEFAULT_SEED,
+)
 from optical_networking_gym_v2.heuristics.runtime_heuristics import select_first_fit_action
+from optical_networking_gym_v2.utils import experiment_scenarios as scenario_utils
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
-
-
-def run_episode(seed: int = 7) -> dict[str, float | int | str]:
-    set_topology_dir(TOPOLOGY_DIR)
-    env = make_env(
-        topology_name="ring_4",
-        modulation_names="QPSK,16QAM",
-        topology_dir=TOPOLOGY_DIR,
+def run_episode(seed: int = DEFAULT_SEED) -> dict[str, float | int | str]:
+    scenario = scenario_utils.build_nobel_eu_graph_load_scenario(
+        topology_id="nobel-eu",
+        episode_length=1000,
         seed=seed,
-        bit_rates=(40,),
-        load=10.0,
-        mean_holding_time=8.0,
-        num_spectrum_resources=24,
-        episode_length=12,
-        modulations_to_consider=2,
-        k_paths=2,
-        enable_action_mask=False,
+        load=DEFAULT_LOAD,
+        mean_holding_time=DEFAULT_MEAN_HOLDING_TIME,
+        num_spectrum_resources=DEFAULT_NUM_SPECTRUM_RESOURCES,
+        k_paths=DEFAULT_K_PATHS,
+        launch_power_dbm=DEFAULT_LAUNCH_POWER_DBM,
+        modulations_to_consider=DEFAULT_MODULATIONS_TO_CONSIDER,
+        measure_disruptions=False,
+        drop_on_disruption=False,
     )
+    env = make_env(config=scenario)
     _, info = env.reset(seed=seed)
     total_reward = 0.0
     steps = 0
@@ -46,6 +49,7 @@ def run_episode(seed: int = 7) -> dict[str, float | int | str]:
         "steps": steps,
         "total_reward": total_reward,
         "last_status": last_status,
+        "blocking_rate": float(info.get("episode_service_blocking_rate", 0.0)),
     }
 
 

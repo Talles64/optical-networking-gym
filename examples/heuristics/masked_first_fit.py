@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from optical_networking_gym_v2 import make_env, set_topology_dir
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
 from optical_networking_gym_v2.heuristics.masked_heuristics import select_first_fit_action
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 
 
 def run_episode(seed: int = 7) -> dict[str, float | int | str]:

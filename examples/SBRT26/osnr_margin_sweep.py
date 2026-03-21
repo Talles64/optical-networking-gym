@@ -21,7 +21,6 @@ from optical_networking_gym_v2.utils import experiment_utils as sweep_utils
 from optical_networking_gym_v2.utils import sweep_reporting as report_utils
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 DEFAULT_POLICY_NAME = "first_fit"
@@ -156,7 +155,6 @@ class MarginSweepOutputs:
 
 def build_base_scenario(experiment: MarginSweepExperiment) -> ScenarioConfig:
     return scenario_utils.build_nobel_eu_graph_load_scenario(
-        REPO_ROOT,
         topology_id=experiment.topology_id,
         episode_length=experiment.episode_length,
         seed=experiment.seed,
