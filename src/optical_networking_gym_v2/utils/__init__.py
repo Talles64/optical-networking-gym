@@ -1,4 +1,8 @@
-from .experiment_scenarios import build_nobel_eu_graph_load_scenario
+from .experiment_scenarios import (
+    build_legacy_benchmark_scenario,
+    build_nobel_eu_graph_load_scenario,
+    build_nobel_eu_ofc_v1_scenario,
+)
 from .experiment_utils import (
     DEFAULT_MODULATION_NAMES,
     EpisodePolicy,
@@ -23,7 +27,9 @@ __all__ = [
     "Scalar",
     "aggregate_summary_metrics",
     "build_modulation_index_to_name",
+    "build_legacy_benchmark_scenario",
     "build_nobel_eu_graph_load_scenario",
+    "build_nobel_eu_ofc_v1_scenario",
     "build_summary_fieldnames",
     "build_sweep_output_paths",
     "date_prefix",

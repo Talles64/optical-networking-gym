@@ -30,7 +30,10 @@ from optical_networking_gym_v2 import (
     TrafficRecord,
     TrafficTable,
     build_runtime_heuristic_context,
+    select_highest_snr_first_fit_runtime_action,
+    select_ksp_best_mod_last_fit_runtime_action,
     select_load_balancing_runtime_action,
+    select_lowest_fragmentation_runtime_action,
     select_random_action,
     select_random_runtime_action,
 )
@@ -63,7 +66,10 @@ def test_public_api_exports_contracts() -> None:
     assert StepInfo is not None
     assert StepTransition is not None
     assert build_runtime_heuristic_context is not None
+    assert select_highest_snr_first_fit_runtime_action is not None
+    assert select_ksp_best_mod_last_fit_runtime_action is not None
     assert select_load_balancing_runtime_action is not None
+    assert select_lowest_fragmentation_runtime_action is not None
     assert select_random_action is not None
     assert select_random_runtime_action is not None
     assert TrafficMode.DYNAMIC.value == "dynamic"

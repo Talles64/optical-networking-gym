@@ -86,7 +86,10 @@ class QoTEngine:
         self.config = config
         self.topology = topology
         self._include_nli = config.qot_constraint == "ASE+NLI"
+        self._include_running_service_interference = bool(config.measure_disruptions)
         self._launch_power = 10 ** ((config.launch_power_dbm - 30.0) / 10.0)
+        self._empty_service_ids = np.empty(0, dtype=np.int32)
+        self._empty_float_values = np.empty(0, dtype=np.float64)
         self._link_span_lengths_km = tuple(
             np.array([span.length_km for span in link.spans], dtype=np.float64)
             for link in topology.links
@@ -223,6 +226,18 @@ class QoTEngine:
         path: PathRecord,
     ) -> _PreparedCandidateSummaryInputs:
         static_inputs = self._path_summary_static_inputs(path)
+        if not self._include_running_service_interference:
+            return _PreparedCandidateSummaryInputs(
+                span_offsets=static_inputs.span_offsets,
+                span_lengths=static_inputs.span_lengths,
+                span_attenuation=static_inputs.span_attenuation,
+                span_noise_figure=static_inputs.span_noise_figure,
+                running_offsets=np.zeros(len(static_inputs.link_ids) + 1, dtype=np.int32),
+                running_service_ids=self._empty_service_ids,
+                running_center_frequencies=self._empty_float_values,
+                running_bandwidths=self._empty_float_values,
+                running_phi_modulation=self._empty_float_values,
+            )
         running_descriptors = tuple(
             self._link_running_service_arrays(state, link_id) for link_id in static_inputs.link_ids
         )
@@ -404,15 +419,25 @@ class QoTEngine:
         worst_link_nli_share = 0.0
 
         for link_id in path.link_ids:
-            running = self._link_running_service_arrays(state, link_id)
+            if self._include_running_service_interference:
+                running = self._link_running_service_arrays(state, link_id)
+                running_service_ids = running.service_ids
+                running_center_frequencies = running.center_frequencies
+                running_bandwidths = running.bandwidths
+                running_phi_modulation = running.phi_modulation
+            else:
+                running_service_ids = self._empty_service_ids
+                running_center_frequencies = self._empty_float_values
+                running_bandwidths = self._empty_float_values
+                running_phi_modulation = self._empty_float_values
             link_acc_gsnr, link_acc_ase, link_acc_nli = accumulate_link_noise(
                 self._link_span_lengths_km[link_id],
                 self._link_span_attenuation_normalized[link_id],
                 self._link_span_noise_figure_normalized[link_id],
-                running.service_ids,
-                running.center_frequencies,
-                running.bandwidths,
-                running.phi_modulation,
+                running_service_ids,
+                running_center_frequencies,
+                running_bandwidths,
+                running_phi_modulation,
                 current_service_id=service_id,
                 center_frequency=center_frequency,
                 bandwidth=bandwidth,

@@ -16,12 +16,13 @@ def _topology() -> TopologyModel:
     return TopologyModel.from_file(RING_4_PATH, topology_id="ring_4", k_paths=2)
 
 
-def _config() -> ScenarioConfig:
+def _config(*, measure_disruptions: bool = False) -> ScenarioConfig:
     return ScenarioConfig(
         scenario_id="qot_ring_4",
         topology_id="ring_4",
         k_paths=2,
         num_spectrum_resources=24,
+        measure_disruptions=measure_disruptions,
     )
 
 
@@ -98,7 +99,7 @@ def test_impacted_service_ids_collects_services_from_shared_links() -> None:
 
 def test_recompute_service_invalidates_cached_link_descriptors_on_state_change() -> None:
     topology = _topology()
-    config = _config()
+    config = _config(measure_disruptions=True)
     engine = QoTEngine(config, topology)
     state = RuntimeState(config, topology)
     path = topology.get_paths("1", "3")[0]

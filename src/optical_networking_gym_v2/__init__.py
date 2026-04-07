@@ -47,9 +47,21 @@ _EXPORTS: dict[str, tuple[str, str]] = {
         ".heuristics.runtime_heuristics",
         "select_first_fit_action",
     ),
+    "select_highest_snr_first_fit_runtime_action": (
+        ".heuristics.runtime_heuristics",
+        "select_highest_snr_first_fit_action",
+    ),
+    "select_ksp_best_mod_last_fit_runtime_action": (
+        ".heuristics.runtime_heuristics",
+        "select_ksp_best_mod_last_fit_action",
+    ),
     "select_load_balancing_runtime_action": (
         ".heuristics.runtime_heuristics",
         "select_load_balancing_action",
+    ),
+    "select_lowest_fragmentation_runtime_action": (
+        ".heuristics.runtime_heuristics",
+        "select_lowest_fragmentation_action",
     ),
     "select_random_action": (".heuristics.masked_heuristics", "select_random_action"),
     "select_random_runtime_action": (

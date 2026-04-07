@@ -104,6 +104,20 @@ def _valid_start_flags(context: RuntimeHeuristicContext) -> np.ndarray:
 _PATH_LINK_UTIL_MEAN_INDEX = int(PATH_FEATURE_NAMES.index("path_link_util_mean"))
 _PATH_LINK_UTIL_MAX_INDEX = int(PATH_FEATURE_NAMES.index("path_link_util_max"))
 _PATH_COMMON_FREE_RATIO_INDEX = int(PATH_FEATURE_NAMES.index("path_common_free_ratio"))
+_PATH_COMMON_NUM_BLOCKS_NORM_INDEX = int(PATH_FEATURE_NAMES.index("path_common_num_blocks_norm"))
+_PATH_ROUTE_CUTS_NORM_INDEX = int(PATH_FEATURE_NAMES.index("path_route_cuts_norm"))
+_PATH_ROUTE_RSS_INDEX = int(PATH_FEATURE_NAMES.index("path_route_rss"))
+_LOCAL_FRAGMENTATION_INDEX = 4
+
+
+def _modulation_offsets_by_descending_efficiency(context: RuntimeHeuristicContext) -> list[int]:
+    return sorted(
+        range(len(context.analysis.modulation_indices)),
+        key=lambda modulation_offset: (
+            -int(context.config.modulations[context.analysis.modulation_indices[modulation_offset]].spectral_efficiency),
+            int(modulation_offset),
+        ),
+    )
 
 
 def select_first_fit_decision(
@@ -230,11 +244,113 @@ def select_load_balancing_action(
     return best_action
 
 
+def select_highest_snr_first_fit_action(
+    source: OpticalEnv | Simulator | RuntimeHeuristicContext,
+) -> int:
+    context = build_runtime_heuristic_context(source)
+    valid_flags = _valid_start_flags(context)
+    best_key: tuple[float, int, int, int, int] | None = None
+    best_action = context.reject_action
+
+    for path_index, _path in enumerate(context.analysis.paths):
+        for modulation_offset, _modulation_index in enumerate(context.analysis.modulation_indices):
+            candidate_indices = np.flatnonzero(valid_flags[path_index, modulation_offset, :])
+            for initial_slot in candidate_indices.tolist():
+                action = encode_action(
+                    context.config,
+                    path_index=path_index,
+                    modulation_offset=modulation_offset,
+                    initial_slot=int(initial_slot),
+                )
+                metrics = context.selected_candidate_metrics(action)
+                if metrics is None:
+                    continue
+                candidate_key = (
+                    float(metrics.osnr_margin),
+                    -int(path_index),
+                    -int(modulation_offset),
+                    -int(initial_slot),
+                    -int(action),
+                )
+                if best_key is None or candidate_key > best_key:
+                    best_key = candidate_key
+                    best_action = int(action)
+
+    return best_action
+
+
+def select_ksp_best_mod_last_fit_action(
+    source: OpticalEnv | Simulator | RuntimeHeuristicContext,
+) -> int:
+    context = build_runtime_heuristic_context(source)
+    valid_flags = _valid_start_flags(context)
+    modulation_offsets = _modulation_offsets_by_descending_efficiency(context)
+
+    for path_index, _path in enumerate(context.analysis.paths):
+        for modulation_offset in modulation_offsets:
+            candidate_indices = np.flatnonzero(valid_flags[path_index, modulation_offset, :])
+            if candidate_indices.size == 0:
+                continue
+            return encode_action(
+                context.config,
+                path_index=path_index,
+                modulation_offset=modulation_offset,
+                initial_slot=int(candidate_indices[-1]),
+            )
+
+    return context.reject_action
+
+
+def select_lowest_fragmentation_action(
+    source: OpticalEnv | Simulator | RuntimeHeuristicContext,
+) -> int:
+    context = build_runtime_heuristic_context(source)
+    valid_flags = _valid_start_flags(context)
+    best_key: tuple[float, ...] | None = None
+    best_action = context.reject_action
+
+    for path_index, _path in enumerate(context.analysis.paths):
+        path_features = context.analysis.path_features[path_index]
+        for modulation_offset, _modulation_index in enumerate(context.analysis.modulation_indices):
+            candidate_indices = np.flatnonzero(valid_flags[path_index, modulation_offset, :])
+            for initial_slot in candidate_indices.tolist():
+                action = encode_action(
+                    context.config,
+                    path_index=path_index,
+                    modulation_offset=modulation_offset,
+                    initial_slot=int(initial_slot),
+                )
+                metrics = context.selected_candidate_metrics(action)
+                if metrics is None:
+                    continue
+                slot_features = context.analysis.path_slot_features[path_index, int(initial_slot)]
+                candidate_key = (
+                    float(metrics.fragmentation_damage_num_blocks),
+                    float(metrics.fragmentation_damage_largest_block),
+                    float(slot_features[_LOCAL_FRAGMENTATION_INDEX]),
+                    float(path_features[_PATH_COMMON_NUM_BLOCKS_NORM_INDEX]),
+                    float(path_features[_PATH_ROUTE_CUTS_NORM_INDEX]),
+                    -float(path_features[_PATH_ROUTE_RSS_INDEX]),
+                    float(context.analysis.required_slots_by_path_mod[path_index, modulation_offset]),
+                    float(path_features[_PATH_LINK_UTIL_MAX_INDEX]),
+                    -float(np.clip(metrics.osnr_margin, 0.0, 3.0)),
+                    float(action),
+                )
+                if best_key is None or candidate_key < best_key:
+                    best_key = candidate_key
+                    best_action = int(action)
+
+    return best_action
+
+
 __all__ = [
     "RuntimeHeuristicContext",
     "build_runtime_heuristic_context",
     "select_first_fit_action",
     "select_first_fit_decision",
+    "select_highest_snr_first_fit_action",
+    "select_ksp_best_mod_last_fit_action",
     "select_load_balancing_action",
+    "select_lowest_fragmentation_action",
     "select_random_action",
 ]
