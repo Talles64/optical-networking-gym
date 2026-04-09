@@ -1,29 +1,30 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, ScenarioConfig, make_env
 from optical_networking_gym_v2.heuristics.masked_heuristics import select_first_fit_action
+from optical_networking_gym_v2.utils import build_nobel_eu_ofc_v1_scenario
 
 
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 
 
-def run_episode(seed: int = 7) -> dict[str, float | int | str]:
-    set_topology_dir(TOPOLOGY_DIR)
-    env = make_env(
-        topology_name="nobel-eu",
-        modulation_names="QPSK,BPSK,8QAM,16QAM,32QAM,64QAM",
-        topology_dir=TOPOLOGY_DIR,
-        seed=seed,
-        bit_rates=(10, 40, 100, 400),
-        load=350.0,
-        mean_holding_time=10800,
-        num_spectrum_resources=320,
+def build_default_scenario(seed: int = 10) -> ScenarioConfig:
+    return build_nobel_eu_ofc_v1_scenario(
         episode_length=1000,
-        modulations_to_consider=2,
-        k_paths=2,
+        seed=seed,
+        load=300.0,
+        mean_holding_time=10800.0,
+        num_spectrum_resources=320,
+        k_paths=3,
+        launch_power_dbm=0.0,
+        modulations_to_consider=6,
+        measure_disruptions=False,
+        drop_on_disruption=False,
     )
+
+
+def run_episode(seed: int = 10) -> dict[str, float | int | str]:
+    env = make_env(config=build_default_scenario(seed=seed))
     _, info = env.reset(seed=seed)
     total_reward = 0.0
     steps = 0
